@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Literal
+
+Status = Literal["pass", "fail", "timeout", "infra_error"]
+
+
+@dataclass
+class AttemptRecord:
+    experiment: str
+    run_id: str
+    task: str
+    repeat: int
+    status: Status
+    hidden_passed: int
+    hidden_total: int
+    regressions_ok: bool
+    parse_ok: bool
+    wall_s: float
+    prompt_tokens: int | None
+    gen_tokens: int | None
+    pp_tps: float | None
+    tg_tps: float | None
+    peak_mem_mib: int | None
+    peak_gpu_mem_mib: int | None
+    steps: int | None
+    throttled: bool
+    upstream_errors: int
+    pushed: bool
+    branch: str
+    versions: dict[str, str]
+    started_at: str
+    error: str = ""
+
+
+def append_record(path: Path, rec: AttemptRecord) -> None:
+    """Append one JSON line, flushed and fsynced so a crash loses at most this line."""
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(asdict(rec)) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def read_records(path: Path) -> list[AttemptRecord]:
+    """Read all records; a corrupt final line (interrupted write) is ignored."""
+    if not path.exists():
+        return []
+    lines = path.read_text(encoding="utf-8").splitlines()
+    out: list[AttemptRecord] = []
+    for i, line in enumerate(lines, start=1):
+        if not line.strip():
+            continue
+        try:
+            out.append(AttemptRecord(**json.loads(line)))
+        except (json.JSONDecodeError, TypeError) as e:
+            if i == len(lines):
+                break
+            raise ValueError(f"{path}: bad record on line {i}: {e}") from e
+    return out
+
+
+def pending(plan: list[tuple[str, int]], records: list[AttemptRecord]) -> list[tuple[str, int]]:
+    """Plan entries still to run: done = any non-infra record, or two infra records."""
+    infra: dict[tuple[str, int], int] = {}
+    done: set[tuple[str, int]] = set()
+    for r in records:
+        key = (r.task, r.repeat)
+        if r.status == "infra_error":
+            infra[key] = infra.get(key, 0) + 1
+        else:
+            done.add(key)
+    return [k for k in plan if k not in done and infra.get(k, 0) < 2]
