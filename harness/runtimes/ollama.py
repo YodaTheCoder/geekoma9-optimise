@@ -13,7 +13,9 @@ UNIT_NAME = "agentbench-runtime"
 UNIT_PATH = f"/home/markn/.config/systemd/user/{UNIT_NAME}.service"
 API = "127.0.0.1:11434"
 # Non-interactive ssh has no user bus; point systemctl --user at it.
-SYSTEMCTL = "XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user"
+USER_BUS = "XDG_RUNTIME_DIR=/run/user/$(id -u)"
+SYSTEMCTL = f"{USER_BUS} systemctl --user"
+JOURNALCTL = f"{USER_BUS} journalctl --user"
 
 
 def _fixed_env(cfg: RuntimeConfig) -> list[tuple[str, str]]:
@@ -24,6 +26,9 @@ def _fixed_env(cfg: RuntimeConfig) -> list[tuple[str, str]]:
         ("OLLAMA_MAX_LOADED_MODELS", "1"),
         # system Ollama's model store; reused so models are not re-pulled
         ("OLLAMA_MODELS", "/usr/share/ollama/.ollama/models"),
+        # Ollama drops the integrated GPU by default; CPU-only cannot fit the
+        # models in this box's system RAM (OOM-killed), so always enable it.
+        ("OLLAMA_IGPU_ENABLE", "1"),
     ]
 
 
@@ -53,7 +58,7 @@ class OllamaRuntime:
 
     def _journal(self, remote: Remote) -> str:
         try:
-            return remote.run(f"journalctl --user -u {UNIT_NAME} -n 20 --no-pager",
+            return remote.run(f"{JOURNALCTL} -u {UNIT_NAME} -n 20 --no-pager",
                               timeout=20, check=False).stdout.strip()
         except (RemoteError, OSError):
             return "(journal unavailable)"

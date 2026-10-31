@@ -41,13 +41,14 @@ def test_render_unit():
     assert "Environment=OLLAMA_KEEP_ALIVE=-1" in u
     assert "Environment=OLLAMA_MAX_LOADED_MODELS=1" in u
     assert "Environment=OLLAMA_MODELS=/usr/share/ollama/.ollama/models" in u
+    assert "Environment=OLLAMA_IGPU_ENABLE=1" in u
     assert "Restart=no" in u and "WantedBy=default.target" in u
     assert "[Unit]" in u and "Description=" in u
     assert u.index("OLLAMA_MODELS") < u.index("ALPHA=2") < u.index("ZED=1")
 
 
 @pytest.mark.parametrize("key", ["OLLAMA_HOST", "OLLAMA_CONTEXT_LENGTH", "OLLAMA_KEEP_ALIVE",
-                                 "OLLAMA_MAX_LOADED_MODELS", "OLLAMA_MODELS"])
+                                 "OLLAMA_MAX_LOADED_MODELS", "OLLAMA_MODELS", "OLLAMA_IGPU_ENABLE"])
 def test_render_unit_rejects_fixed_keys(key):
     with pytest.raises(ConfigError):
         render_unit(cfg(**{key: "x"}))
@@ -113,9 +114,12 @@ def test_warmup_failure_is_start_error():
             if "/api/generate" in cmd:
                 raise subprocess.CalledProcessError(22, cmd, "", "model not found")
             return subprocess.CompletedProcess(cmd, 0, "journal-line" if "journalctl" in cmd else "", "")
+    r = R()
     with pytest.raises(RuntimeStartError) as e:
-        OllamaRuntime(cfg()).start(R())
+        OllamaRuntime(cfg()).start(r)
     assert "model not found" in str(e.value) and "journal-line" in str(e.value)
+    journal = [c for c in r.cmds if "journalctl" in c]
+    assert journal and all("XDG_RUNTIME_DIR=/run/user/$(id -u)" in c for c in journal)
 
 
 def test_poll_timeouts_retry_then_start_error(monkeypatch):
