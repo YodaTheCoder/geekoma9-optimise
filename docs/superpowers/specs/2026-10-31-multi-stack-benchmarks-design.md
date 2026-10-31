@@ -1,7 +1,7 @@
 # Multi-stack benchmarks — design
 
 Date: 2026-10-31
-Status: draft, awaiting review
+Status: approved 2026-10-31; plans written after E1 (build order below)
 Builds on: `docs/superpowers/specs/2026-10-31-coding-agent-optimisation-design.md`
 
 ## Goal
