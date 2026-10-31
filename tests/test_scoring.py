@@ -22,6 +22,21 @@ def test_parse_junit_counts():
     assert parse_junit(fixture("junit_mixed.xml")) == TestCounts(3, 1, 1)
 
 
+def test_parse_junit_real_gut_counts_per_testcase():
+    # GUT 9.7.1: suite failures="3" counts asserts/pending, not testcases; pending is <skipped>.
+    assert parse_junit(fixture("junit_gut_real.xml")) == TestCounts(1, 1, 0)
+
+
+def test_parse_junit_only_skipped_is_zero():
+    xml = '<testsuites><testsuite><testcase name="a"><skipped/></testcase></testsuite></testsuites>'
+    assert parse_junit(xml).total == 0
+
+
+def test_parse_junit_no_testcases_ignores_suite_attributes():
+    xml = '<testsuites><testsuite tests="5" failures="2"/></testsuites>'
+    assert parse_junit(xml) == TestCounts(0, 0, 0)
+
+
 def test_parse_junit_empty_suite_is_zero():
     assert parse_junit(fixture("junit_empty.xml")).total == 0
 

@@ -16,8 +16,8 @@ from harness.run import HostDirtyError, InfraError, preflight, run_attempt, run_
 from harness.tiers import TASK_SETS
 
 SCREENING = TASK_SETS["v1"]["screening"]
-PASS_XML = '<testsuites><testsuite tests="2" failures="0" errors="0"/></testsuites>'
-FAIL_XML = '<testsuites><testsuite tests="2" failures="1" errors="0"/></testsuites>'
+PASS_XML = '<testsuites><testsuite><testcase name="a"/><testcase name="b"/></testsuite></testsuites>'
+FAIL_XML = '<testsuites><testsuite><testcase name="a"/><testcase name="b"><failure/></testcase></testsuite></testsuites>'
 OK = AgentResult(exit_code=0, timed_out=False, wall_s=600.0, steps=4)
 
 CFG = ExperimentConfig(

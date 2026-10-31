@@ -22,14 +22,24 @@ class TestCounts:
 
 
 def parse_junit(xml: str) -> TestCounts:
-    """Sum tests/failures/errors over every testsuite element."""
+    """Count per testcase; suite attributes are ignored (GUT counts failed asserts there).
+
+    A testcase with an <error> child is an error, else with a <failure> child
+    it is a failure, else it passes. <skipped> (GUT pending/risky) testcases
+    are excluded entirely.
+    """
     root = ET.fromstring(xml)
-    tests = failures = errors = 0
-    for suite in root.iter("testsuite"):
-        tests += int(suite.get("tests", 0))
-        failures += int(suite.get("failures", 0))
-        errors += int(suite.get("errors", 0))
-    return TestCounts(tests - failures - errors, failures, errors)
+    passed = failed = errors = 0
+    for case in root.iter("testcase"):
+        if case.find("skipped") is not None:
+            continue
+        if case.find("error") is not None:
+            errors += 1
+        elif case.find("failure") is not None:
+            failed += 1
+        else:
+            passed += 1
+    return TestCounts(passed, failed, errors)
 
 
 _PARSE_ERROR = re.compile(r"SCRIPT ERROR: Parse Error|Failed to load script")
