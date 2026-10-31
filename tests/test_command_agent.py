@@ -11,6 +11,7 @@ from harness.agents.command import CommandAgent, render_command
 from harness.agents.null import NullAgent
 from harness.agents.oracle import OracleAgent
 from harness.config import AgentConfig, ConfigError
+from harness.remote import RemoteError
 from harness.paths import attempt_paths
 
 EMPTY = dict(workdir="", issue_file="", endpoint="", model="", log="")
@@ -60,10 +61,10 @@ def test_command_agent_kills_process_group(fake_remote):
 def test_command_agent_command_shape_and_timeout(fake_remote):
     CommandAgent(cfg(env={"K": "v w"})).run(fake_remote, PATHS, "e", "mod", 50)
     run = fake_remote.calls[0]
-    assert run.startswith(f"cd {PATHS.workdir} && setsid bash -c ")
+    assert run.startswith(f"cd {PATHS.workdir} && setsid --wait bash -c ")
     assert "timeout -k 30 50 bash -c" in run
     assert run.endswith("> " + PATHS.agent_log + " 2>&1")
-    script = shlex.split(run)[6]               # cd W && setsid bash -c <script> > L 2>&1
+    script = shlex.split(run)[7]               # cd W && setsid bash -c <script> > L 2>&1
     inner = shlex.split(script.split("bash -c ", 1)[1])[0]
     assert "export K='v w'; " in inner
     assert fake_remote.timeouts[0] == 170
@@ -86,3 +87,38 @@ def test_make_agent():
     assert isinstance(make_agent(AgentConfig(kind="null", name="n")), NullAgent)
     assert isinstance(make_agent(AgentConfig(kind="oracle", name="o")), OracleAgent)
     assert isinstance(make_agent(cfg()), CommandAgent)
+
+
+def test_pkill_runs_when_run_raises(fake_remote):
+    orig = fake_remote.run
+
+    def run(cmd, timeout=None, check=True):
+        if "setsid" in cmd:
+            raise RemoteError("dropped")
+        if "pkill" in cmd:
+            orig(cmd, timeout, check)
+            raise RemoteError("dropped again")
+        return orig(cmd, timeout, check)
+
+    fake_remote.run = run
+    with pytest.raises(RemoteError, match="dropped$"):
+        CommandAgent(cfg()).run(fake_remote, PATHS, "e", "m", 5)
+    assert any("pkill -KILL -s" in c for c in fake_remote.calls)
+
+
+def test_setsid_wait(fake_remote):
+    CommandAgent(cfg()).run(fake_remote, PATHS, "e", "m", 5)
+    assert "setsid --wait bash -c" in fake_remote.calls[0]
+
+
+@pytest.mark.parametrize("c", [
+    cfg(env={"A B": "x"}), cfg(env={"1A": "x"}), cfg(steps_regex="("),
+])
+def test_invalid_config_raises(fake_remote, c):
+    with pytest.raises(ConfigError):
+        CommandAgent(c).run(fake_remote, PATHS, "e", "m", 5)
+
+
+def test_render_attr_error():
+    with pytest.raises(ConfigError):
+        render_command("{workdir.x}", **EMPTY)
