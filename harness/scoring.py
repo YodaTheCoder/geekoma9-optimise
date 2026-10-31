@@ -72,6 +72,7 @@ def load_score(score_json: str) -> tuple[bool, TestCounts | None, TestCounts | N
     log_path = data.get("import_log")
     log = Path(log_path).read_text(errors="replace") if log_path and Path(log_path).is_file() else ""
     parse_ok = not data.get("import_timed_out") and parse_ok_from_log(log)
-    hidden = _load_counts(data.get("hidden_xml"), bool(data.get("hidden_timed_out")))
+    extra_failed = bool(data.get("extra_timed_out")) or data.get("extra_exit") not in (None, 0)
+    hidden = _load_counts(data.get("hidden_xml"), bool(data.get("hidden_timed_out")) or extra_failed)
     regression = _load_counts(data.get("regression_xml"), bool(data.get("regression_timed_out")))
     return parse_ok, hidden, regression

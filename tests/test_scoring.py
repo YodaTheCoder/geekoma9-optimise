@@ -96,3 +96,14 @@ def test_load_score_null_or_missing_xml_is_none(tmp_path):
 def test_load_score_import_timeout_or_bad_log_is_not_parse_ok(tmp_path):
     assert load_score(_score(tmp_path, import_timed_out=True))[0] is False
     assert load_score(_score(tmp_path, log="SCRIPT ERROR: Parse Error: x\n"))[0] is False
+
+
+@pytest.mark.parametrize("over", [{"extra_exit": 1}, {"extra_exit": 124, "extra_timed_out": True}])
+def test_load_score_failed_extra_makes_hidden_none(tmp_path, over):
+    _, hidden, regression = load_score(_score(tmp_path, **over))
+    assert hidden is None and regression == TestCounts(3, 1, 1)
+
+
+def test_load_score_successful_extra_keeps_hidden(tmp_path):
+    _, hidden, _ = load_score(_score(tmp_path, extra_exit=0, extra_timed_out=False))
+    assert hidden == TestCounts(3, 1, 1)
