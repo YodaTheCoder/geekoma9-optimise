@@ -3,17 +3,18 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
 from harness.config import load_config
-from harness.results import _drop_partial_tail, read_records
+from harness.results import drop_partial_tail, read_records
 
 REVIEWER = "claude-opus"
-CLAUDE = "/Users/marknorton/.local/bin/claude"
 CLAUDE_TIMEOUT_S = 600
 DEFAULT_BENCH = "~/_dev/claude/godot-agent-bench"
 
@@ -32,7 +33,14 @@ class Review:
     reviewer: str
 
 
+def _fence(*texts: str) -> str:
+    """A backtick fence longer than any backtick run in the texts."""
+    longest = max((len(m) for t in texts for m in re.findall(r"`+", t)), default=0)
+    return "`" * max(3, longest + 1)
+
+
 def build_review_prompt(issue_text: str, diff: str) -> str:
+    f = _fence(issue_text, diff)
     return f"""You are a maintainer reviewing a patch written by a coding agent for a Godot (GDScript) project.
 
 ## Issue
@@ -41,9 +49,9 @@ def build_review_prompt(issue_text: str, diff: str) -> str:
 
 ## Patch (git diff)
 
-```diff
+{f}diff
 {diff}
-```
+{f}
 
 ## Rubric
 
@@ -79,7 +87,7 @@ def parse_review(text: str) -> tuple[bool, int, str]:
 
 
 def append_review(path: Path, rev: Review) -> None:
-    _drop_partial_tail(path)
+    drop_partial_tail(path)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(asdict(rev)) + "\n")
         f.flush()
@@ -103,12 +111,20 @@ def read_reviews(path: Path) -> list[Review]:
     return out
 
 
-def claude_runner(prompt: str) -> str:
-    """Run the claude CLI with the prompt on stdin (diffs can be large)."""
-    r = subprocess.run([CLAUDE, "-p", "--model", "opus", "--output-format", "text"],
-                       input=prompt, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_S,
-                       check=True)
-    return r.stdout
+def find_claude() -> str | None:
+    return os.environ.get("CLAUDE_BIN") or shutil.which("claude")
+
+
+def make_claude_runner(binary: str) -> Runner:
+    def run(prompt: str) -> str:
+        """Prompt on stdin (diffs can be large); fresh cwd and no tools so the review is unbiased."""
+        with tempfile.TemporaryDirectory() as cwd:
+            r = subprocess.run(
+                [binary, "-p", "--model", "opus", "--output-format", "text", "--tools", ""],
+                input=prompt, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_S,
+                check=True, cwd=cwd)
+        return r.stdout
+    return run
 
 
 def make_git(bench: Path) -> Git:
@@ -139,9 +155,15 @@ def _ask(runner: Runner, prompt: str) -> tuple[bool, int, str]:
     raise AssertionError("unreachable")
 
 
-def review_experiment(exp_dir: Path, runner: Runner = claude_runner, git: Git | None = None,
+def review_experiment(exp_dir: Path, runner: Runner | None = None, git: Git | None = None,
                       bench: Path | None = None) -> int:
     cfg = load_config(exp_dir / "config.yaml")
+    if runner is None:
+        binary = find_claude()
+        if binary is None:
+            print("error: claude CLI not found; install it or set CLAUDE_BIN", file=sys.stderr)
+            return 2
+        runner = make_claude_runner(binary)
     if git is None:
         git = make_git(Path(bench or DEFAULT_BENCH).expanduser())
     out = exp_dir / "reviews.jsonl"

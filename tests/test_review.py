@@ -137,3 +137,26 @@ def test_fetch_failure_only_warns(tmp_path, capsys):
 
     assert review.review_experiment(exp, runner=lambda p: json.dumps(GOOD), git=G()) == 0
     assert "warning" in capsys.readouterr().err
+
+
+def test_prompt_fence_survives_backticks_in_diff():
+    diff = "+x = \"\"\"\n```\n+````\n"
+    p = build_review_prompt("issue", diff)
+    assert "5 = merge as is" in p
+    fence = "`````"  # longest run is 4, so the fence must be 5
+    assert f"{fence}diff\n{diff}\n{fence}" in p
+
+
+def test_missing_claude_fails_once_before_loop(tmp_path, monkeypatch, capsys):
+    exp = _setup(tmp_path, [_rec("t1", 1), _rec("t2", 1)])
+    monkeypatch.delenv("CLAUDE_BIN", raising=False)
+    monkeypatch.setattr(review.shutil, "which", lambda name: None)
+    git = FakeGit()
+    assert review.review_experiment(exp, git=git) == 2
+    assert git.calls == []
+    assert capsys.readouterr().err.count("claude CLI not found") == 1
+
+
+def test_claude_bin_env_wins(monkeypatch):
+    monkeypatch.setenv("CLAUDE_BIN", "/x/claude")
+    assert review.find_claude() == "/x/claude"

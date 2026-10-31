@@ -37,7 +37,7 @@ class AttemptRecord:
     error: str = ""
 
 
-def _drop_partial_tail(path: Path) -> None:
+def drop_partial_tail(path: Path) -> None:
     """Truncate an unterminated trailing fragment so the next append starts a clean line."""
     if not path.exists() or path.stat().st_size == 0:
         return
@@ -50,7 +50,7 @@ def _drop_partial_tail(path: Path) -> None:
 
 def append_record(path: Path, rec: AttemptRecord) -> None:
     """Append one JSON line, flushed and fsynced so a crash loses at most this line."""
-    _drop_partial_tail(path)
+    drop_partial_tail(path)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(asdict(rec)) + "\n")
         f.flush()
