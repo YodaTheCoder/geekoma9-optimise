@@ -122,3 +122,9 @@ def test_invalid_config_raises(fake_remote, c):
 def test_render_attr_error():
     with pytest.raises(ConfigError):
         render_command("{workdir.x}", **EMPTY)
+
+
+def test_agent_stdin_is_dev_null(fake_remote):
+    # An open ssh stdin hangs agents that read piped input (OpenCode `run` waits on it forever).
+    CommandAgent(cfg()).run(fake_remote, PATHS, "e", "m", 5)
+    assert fake_remote.calls[0].endswith("< /dev/null > " + PATHS.agent_log + " 2>&1")

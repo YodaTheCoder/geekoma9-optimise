@@ -44,8 +44,11 @@ class CommandAgent:
         sid = f"{paths.root}/agent.sid"
         inner = (f"echo $$ > {shlex.quote(sid)}; "
                  f"exec timeout -k 30 {int(timeout_s)} bash -c {shlex.quote(exports + rendered)}")
+        # stdin from /dev/null: the ssh session's stdin never closes, and agents that read
+        # piped input (OpenCode `run`) would wait on it forever.
         cmd = (f"cd {shlex.quote(paths.workdir)} && "
-               f"setsid --wait bash -c {shlex.quote(inner)} > {shlex.quote(paths.agent_log)} 2>&1")
+               f"setsid --wait bash -c {shlex.quote(inner)} "
+               f"< /dev/null > {shlex.quote(paths.agent_log)} 2>&1")
         start = time.monotonic()
         # ssh timeout outlasts the agent's own so ssh never cuts it first.
         try:
