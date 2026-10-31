@@ -69,7 +69,7 @@ def _restore_system_ollama(remote: Remote, clock, attempts: int = 3) -> None:
             detail = f"exit {r.returncode}"
         except Exception as e:  # noqa: BLE001
             detail = _short_error(e)
-    print(f"system Ollama NOT restarted ({detail}) \N{EM DASH} run: sudo systemctl start ollama",
+    print(f"system Ollama NOT restarted ({detail}) - run: sudo systemctl start ollama",
           file=sys.stderr)
 
 
