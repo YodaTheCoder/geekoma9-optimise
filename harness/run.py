@@ -28,6 +28,8 @@ ENDPOINT = f"http://{PROXY_LISTEN}"
 SAMPLE_INTERVAL_S = 5
 PROXY_FLUSH_S = 2  # let the proxy write its last usage row before it is stopped
 SCORE_TIMEOUT_S = 2400  # score.sh: import 300 + two GUT suites 600 each + extra 600, plus slack
+SYSTEM_OLLAMA_STOP = "sudo -n systemctl stop ollama"
+SYSTEM_OLLAMA_START = "sudo -n systemctl start ollama"
 # Bracket trick: the pattern does not match the shell running pgrep itself.
 PREFLIGHT_CMD = "pgrep -u markn -f '[g]odot|agentbench/[r]uns/|agentbench/[b]in/'"
 # Exceptions that make an attempt infra_error instead of aborting the experiment.
@@ -239,8 +241,12 @@ def run_experiment(cfg: ExperimentConfig, exp_dir: Path, *, remote: Remote, benc
     todo = pending(tier_plan(cfg), read_records(results))
 
     bench.update()
-    runtime.start(remote)
+    # The owner's system Ollama owns the GPU and port 11434: stop it for the run, and bring it
+    # back afterwards whatever happens (the stop sits inside the try so a half-failed stop is
+    # still followed by a start).
     try:
+        remote.run(SYSTEM_OLLAMA_STOP)
+        runtime.start(remote)
         for i, (task, repeat) in enumerate(todo):
             if i and cfg.cooldown_s > 0:
                 clock.sleep(cfg.cooldown_s)
@@ -279,4 +285,7 @@ def run_experiment(cfg: ExperimentConfig, exp_dir: Path, *, remote: Remote, benc
                         f"stray processes survived pkill before retrying {task} r{repeat}: "
                         f"{' '.join(stray)}")
     finally:
-        runtime.stop(remote)
+        try:
+            runtime.stop(remote)
+        finally:
+            remote.run(SYSTEM_OLLAMA_START, check=False)

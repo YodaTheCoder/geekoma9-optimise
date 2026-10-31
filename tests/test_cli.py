@@ -17,12 +17,6 @@ def test_report_writes_readme(tmp_path):
     assert "<!-- results:start -->" in text and "| t1 | 1 | pass |" in text
 
 
-def test_stub_subcommands_return_2(tmp_path, capsys):
-    assert cli.main(["review", str(tmp_path)]) == 2
-    assert cli.main(["provision"]) == 2
-    assert "not implemented yet" in capsys.readouterr().err
-
-
 def _fake_run(outcomes):
     """Replace run_experiment: write one record per task with outcomes[kind](task)."""
     seen = []

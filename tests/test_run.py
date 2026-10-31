@@ -258,6 +258,38 @@ def test_bench_error_is_infra_not_fatal(tmp_path):
     assert [r.status for r in recs[:2]] == ["infra_error", "pass"]
 
 
+def test_system_ollama_stopped_before_runtime_and_started_after(tmp_path):
+    remote = BenchRemote()
+    experiment(tmp_path, remote, FakeAgent())
+    assert remote.calls[0] == "sudo -n systemctl stop ollama"
+    assert remote.calls[-1] == "sudo -n systemctl start ollama"
+    assert remote.calls.count("sudo -n systemctl start ollama") == 1
+
+
+def test_system_ollama_restored_on_error(tmp_path):
+    remote = BenchRemote()
+    with pytest.raises(ValueError):
+        experiment(tmp_path, remote, FakeAgent(ValueError("agent bug")))
+    assert remote.calls[-1] == "sudo -n systemctl start ollama"
+
+
+def test_system_ollama_restored_on_host_dirty(tmp_path):
+    remote = StrayRemote(persistent=True)
+    with pytest.raises(HostDirtyError):
+        experiment(tmp_path, remote, FakeAgent())
+    assert remote.calls[-1] == "sudo -n systemctl start ollama"
+
+
+def test_system_ollama_restored_when_runtime_start_fails(tmp_path):
+    class Boom(FakeRuntime):
+        def start(self, remote):
+            raise RemoteError("no")
+    remote = BenchRemote()
+    with pytest.raises(RemoteError):
+        experiment(tmp_path, remote, FakeAgent(), runtime=Boom())
+    assert remote.calls[-1] == "sudo -n systemctl start ollama"
+
+
 def test_resume_skips_done(tmp_path):
     (tmp_path / "run_id").write_text("e0-202601010000\n")
     seed = attempt(BenchRemote())

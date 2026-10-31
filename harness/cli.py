@@ -8,6 +8,7 @@ import yaml
 
 from harness.bench import BenchRepo
 from harness.config import ConfigError, ExperimentConfig, load_config
+from harness.provision import provision
 from harness.remote import Remote
 from harness.report import render_markdown, summarize, write_readme
 from harness.results import read_records
@@ -79,9 +80,8 @@ def cmd_review(args) -> int:
     return review_experiment(Path(args.exp_dir), bench=Path(args.bench))
 
 
-def cmd_not_implemented(args) -> int:
-    print(f"harness {args.command}: not implemented yet", file=sys.stderr)
-    return 2
+def cmd_provision(args) -> int:
+    return provision(Remote())
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--bench", default=DEFAULT_BENCH, help="local benchmark repo clone")
     s.set_defaults(func=cmd_review)
     s = sub.add_parser("provision", help="set up geekoma9")
-    s.set_defaults(func=cmd_not_implemented)
+    s.set_defaults(func=cmd_provision)
     args = p.parse_args(argv)
     try:
         return args.func(args)
