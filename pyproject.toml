@@ -21,3 +21,5 @@ packages = ["harness"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m \"not live\""
+markers = ["live: starts local servers on ephemeral ports (run with -m \"live or not live\")"]
