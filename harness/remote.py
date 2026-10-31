@@ -17,7 +17,10 @@ class Remote:
 
     def _exec(self, args: list[str], timeout: float | None, check: bool,
               input: str | None = None) -> subprocess.CompletedProcess[str]:
-        r = subprocess.run(args, capture_output=True, text=True, timeout=timeout, input=input)
+        try:
+            r = subprocess.run(args, capture_output=True, text=True, timeout=timeout, input=input)
+        except subprocess.TimeoutExpired as e:
+            raise RemoteError(f"{args[0]} to {self.host} timed out after {timeout}s") from e
         if r.returncode == 255:
             raise RemoteError(f"{args[0]} to {self.host} failed: {(r.stderr or '').strip()}")
         if check and r.returncode != 0:

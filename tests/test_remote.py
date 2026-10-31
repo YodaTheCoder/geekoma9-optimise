@@ -85,3 +85,11 @@ def test_attempt_paths():
     assert p.usage_log == f"{root}/usage.jsonl"
     assert p.samples_csv == f"{root}/samples.csv"
     assert p.score_dir == f"{root}/score"
+
+
+def test_timeout_maps_to_remote_error(monkeypatch):
+    def boom(args, **kw):
+        raise subprocess.TimeoutExpired(args, 1)
+    monkeypatch.setattr(subprocess, "run", boom)
+    with pytest.raises(RemoteError):
+        Remote().run("sleep 9", timeout=1)

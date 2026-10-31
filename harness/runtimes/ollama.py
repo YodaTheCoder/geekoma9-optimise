@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import shlex
+import subprocess
 import time
 
 from harness.config import ConfigError, RuntimeConfig
-from harness.remote import Remote
+from harness.remote import Remote, RemoteError
+from harness.runtimes.base import RuntimeStartError
 
 UNIT_NAME = "agentbench-runtime"
 UNIT_PATH = f"/home/markn/.config/systemd/user/{UNIT_NAME}.service"
@@ -41,38 +43,60 @@ def render_unit(cfg: RuntimeConfig) -> str:
 class OllamaRuntime:
     def __init__(self, cfg: RuntimeConfig):
         self.cfg = cfg
-        self.model = cfg.model
+        # normalise so /api/tags and /api/ps names (always tagged) match
+        last = cfg.model.rsplit("/", 1)[-1]
+        self.model = cfg.model if ":" in last else f"{cfg.model}:latest"
         self.upstream = f"http://{API}"
 
     def _get(self, remote: Remote, path: str) -> dict:
         return json.loads(remote.run(f"curl -sf {API}{path}", timeout=30).stdout)
 
+    def _journal(self, remote: Remote) -> str:
+        try:
+            return remote.run(f"journalctl --user -u {UNIT_NAME} -n 20 --no-pager",
+                              timeout=20, check=False).stdout.strip()
+        except (RemoteError, OSError):
+            return "(journal unavailable)"
+
     def start(self, remote: Remote) -> None:
+        remote.run(f"mkdir -p {shlex.quote(UNIT_PATH.rsplit('/', 1)[0])}")
         remote.write_text(UNIT_PATH, render_unit(self.cfg))
         remote.run(f"{SYSTEMCTL} daemon-reload")
         remote.run(f"{SYSTEMCTL} restart {UNIT_NAME}")
         deadline = time.monotonic() + 60
+        last_err = ""
         while True:
-            if remote.run(f"curl -sf {API}/api/version", timeout=15, check=False).returncode == 0:
-                break
+            try:
+                r = remote.run(f"curl -sf {API}/api/version", timeout=15, check=False)
+                if r.returncode == 0:
+                    break
+                last_err = r.stderr.strip()
+            except RemoteError as e:
+                last_err = str(e)
             if time.monotonic() >= deadline:
-                raise RuntimeError("ollama did not become ready within 60s")
+                raise RuntimeStartError(
+                    f"ollama did not become ready within 60s ({last_err})\n{self._journal(remote)}")
             time.sleep(1)
         body = json.dumps({"model": self.model, "prompt": "hi",
                            "options": {"num_predict": 1}, "keep_alive": -1})
-        remote.run(f"curl -sf --max-time 600 -X POST -d {shlex.quote(body)} {API}/api/generate",
-                   timeout=620)
+        try:
+            remote.run(f"curl -sf --max-time 600 -X POST -d {shlex.quote(body)} {API}/api/generate",
+                       timeout=620)
+        except (subprocess.CalledProcessError, RemoteError) as e:
+            detail = getattr(e, "stderr", None) or str(e)
+            raise RuntimeStartError(
+                f"warm-up of {self.model} failed: {detail}\n{self._journal(remote)}") from e
 
     def stop(self, remote: Remote) -> None:
         remote.run(f"{SYSTEMCTL} stop {UNIT_NAME}", check=False)
 
     def versions(self, remote: Remote) -> dict[str, str]:
         out = remote.run("/usr/local/bin/ollama --version", timeout=30).stdout.strip()
-        digest = ""
+        out = out.removeprefix("ollama version is ").strip()
         for m in self._get(remote, "/api/tags").get("models", []):
-            if m.get("name") == self.model:
-                digest = m.get("digest", "")
-        return {"runtime": f"ollama {out}", "model_digest": digest}
+            if m.get("name") == self.model and m.get("digest"):
+                return {"runtime": f"ollama {out}", "model_digest": m["digest"]}
+        raise RuntimeStartError(f"model {self.model} not found in /api/tags")
 
     def loaded_models(self, remote: Remote) -> list[str]:
         return [m["name"] for m in self._get(remote, "/api/ps").get("models", [])]

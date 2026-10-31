@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from harness.remote import Remote
+from harness.remote import Remote, RemoteError
+
+
+class RuntimeStartError(RemoteError):
+    """Runtime failed to start, warm up or report state (maps to infra_error)."""
 
 
 class Runtime(Protocol):

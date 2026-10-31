@@ -4,7 +4,9 @@ import subprocess
 import pytest
 
 from harness.config import ConfigError, RuntimeConfig
+from harness.remote import RemoteError
 from harness.runtimes import make_runtime
+from harness.runtimes.base import RuntimeStartError
 from harness.runtimes.ollama import OllamaRuntime, render_unit
 
 
@@ -62,6 +64,7 @@ def test_start_sequence():
     r = FakeRemote([("/api/version", '{"version":"0.1"}')])
     OllamaRuntime(cfg()).start(r)
     assert "/home/markn/.config/systemd/user/agentbench-runtime.service" in r.writes
+    assert r.cmds[0].startswith("mkdir -p ")
     joined = "\n".join(r.cmds)
     assert joined.index("daemon-reload") < joined.index("restart agentbench-runtime")
     assert joined.index("restart agentbench-runtime") < joined.index("/api/version")
@@ -80,7 +83,7 @@ def test_start_times_out(monkeypatch):
             self.cmds.append(cmd)
             rc = 22 if "/api/version" in cmd else 0
             return subprocess.CompletedProcess(cmd, rc, "", "")
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeStartError):
         OllamaRuntime(cfg()).start(R())
 
 
@@ -98,6 +101,51 @@ def test_versions_and_loaded():
                     ("/api/tags", tags), ("/api/ps", ps)])
     rt = OllamaRuntime(cfg())
     v = rt.versions(r)
-    assert v["runtime"].startswith("ollama ") and "0.12.3" in v["runtime"]
+    assert v["runtime"] == "ollama 0.12.3"
     assert v["model_digest"] == "abc123"
     assert rt.loaded_models(r) == ["qwen3:8b"]
+
+
+def test_warmup_failure_is_start_error():
+    class R(FakeRemote):
+        def run(self, cmd, timeout=None, check=True):
+            self.cmds.append(cmd)
+            if "/api/generate" in cmd:
+                raise subprocess.CalledProcessError(22, cmd, "", "model not found")
+            return subprocess.CompletedProcess(cmd, 0, "journal-line" if "journalctl" in cmd else "", "")
+    with pytest.raises(RuntimeStartError) as e:
+        OllamaRuntime(cfg()).start(R())
+    assert "model not found" in str(e.value) and "journal-line" in str(e.value)
+
+
+def test_poll_timeouts_retry_then_start_error(monkeypatch):
+    import harness.runtimes.ollama as mod
+    t = iter(range(0, 1000, 20))
+    monkeypatch.setattr(mod.time, "monotonic", lambda: next(t))
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    polls = []
+    class R(FakeRemote):
+        def run(self, cmd, timeout=None, check=True):
+            self.cmds.append(cmd)
+            if "/api/version" in cmd:
+                polls.append(1)
+                raise RemoteError("timed out")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+    with pytest.raises(RuntimeStartError):
+        OllamaRuntime(cfg()).start(R())
+    assert len(polls) >= 2
+
+
+def test_untagged_model_normalised():
+    rt = OllamaRuntime(RuntimeConfig(kind="ollama", model="qwen3", context=1))
+    assert rt.model == "qwen3:latest"
+    tags = json.dumps({"models": [{"name": "qwen3:latest", "digest": "d1"}]})
+    r = FakeRemote([("ollama --version", "ollama version is 1\n"), ("/api/tags", tags)])
+    assert rt.versions(r)["model_digest"] == "d1"
+
+
+def test_versions_model_not_found():
+    r = FakeRemote([("ollama --version", "ollama version is 1\n"),
+                    ("/api/tags", json.dumps({"models": []}))])
+    with pytest.raises(RuntimeStartError):
+        OllamaRuntime(cfg()).versions(r)
