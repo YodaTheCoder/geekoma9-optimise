@@ -37,8 +37,20 @@ class AttemptRecord:
     error: str = ""
 
 
+def _drop_partial_tail(path: Path) -> None:
+    """Truncate an unterminated trailing fragment so the next append starts a clean line."""
+    if not path.exists() or path.stat().st_size == 0:
+        return
+    data = path.read_bytes()
+    if data.endswith(b"\n"):
+        return
+    with path.open("r+b") as f:
+        f.truncate(data.rfind(b"\n") + 1)
+
+
 def append_record(path: Path, rec: AttemptRecord) -> None:
     """Append one JSON line, flushed and fsynced so a crash loses at most this line."""
+    _drop_partial_tail(path)
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(asdict(rec)) + "\n")
         f.flush()

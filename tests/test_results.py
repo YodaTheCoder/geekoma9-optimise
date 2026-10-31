@@ -52,3 +52,13 @@ def test_pending_skips_completed_and_double_infra():
 
 def test_missing_file_is_empty(tmp_path: Path):
     assert read_records(tmp_path / "none.jsonl") == []
+
+
+def test_append_after_truncation_recovers(tmp_path: Path):
+    p = tmp_path / "results.jsonl"
+    a, b, c = rec("001", 1), rec("002", 1), rec("003", 1)
+    append_record(p, a)
+    p.write_text(p.read_text() + '{"experiment": "e0", "ta')
+    append_record(p, b)
+    append_record(p, c)
+    assert read_records(p) == [a, b, c]
