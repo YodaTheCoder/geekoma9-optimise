@@ -31,3 +31,28 @@ def test_rejects_invalid(tmp_path, bad):
     p.write_text(yaml.safe_dump(data))
     with pytest.raises(ConfigError):
         load_config(p)
+
+
+def _load(tmp_path, **over):
+    data = yaml.safe_load(MINIMAL)
+    data.update(over)
+    p = tmp_path / "c.yaml"
+    p.write_text(yaml.safe_dump(data))
+    return load_config(p)
+
+
+def test_non_empty_sampling_rejected(tmp_path):
+    # nothing applies sampling yet; recording it would misattribute results
+    with pytest.raises(ConfigError, match="sampling: not applied by any runtime yet; leave it empty"):
+        _load(tmp_path, sampling={"temperature": 0.2})
+    assert _load(tmp_path, sampling={}).sampling == {}
+
+
+@pytest.mark.parametrize("bad", ["", "E0", "../x", "a..b", "-x", "a/b", "a b", ".x"])
+def test_id_must_be_ref_safe(tmp_path, bad):
+    with pytest.raises(ConfigError, match="id"):
+        _load(tmp_path, id=bad)
+
+
+def test_ref_safe_id_accepted(tmp_path):
+    assert _load(tmp_path, id="e1-split.16g_x").id == "e1-split.16g_x"

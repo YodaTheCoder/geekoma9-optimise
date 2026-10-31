@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+import sys
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Literal
 
@@ -11,6 +12,8 @@ Status = Literal["pass", "fail", "timeout", "infra_error"]
 
 @dataclass
 class AttemptRecord:
+    # Backward compatible both ways: every field added from now on has a default (old
+    # files stay readable), and read_records ignores keys it does not know (newer files).
     experiment: str
     run_id: str
     task: str
@@ -62,16 +65,23 @@ def read_records(path: Path) -> list[AttemptRecord]:
     if not path.exists():
         return []
     lines = path.read_text(encoding="utf-8").splitlines()
+    known = {f.name for f in fields(AttemptRecord)}
+    unknown: set[str] = set()
     out: list[AttemptRecord] = []
     for i, line in enumerate(lines, start=1):
         if not line.strip():
             continue
         try:
-            out.append(AttemptRecord(**json.loads(line)))
-        except (json.JSONDecodeError, TypeError) as e:
+            data = json.loads(line)
+            unknown |= set(data) - known
+            out.append(AttemptRecord(**{k: v for k, v in data.items() if k in known}))
+        except (json.JSONDecodeError, TypeError, AttributeError) as e:
             if i == len(lines):
                 break
             raise ValueError(f"{path}: bad record on line {i}: {e}") from e
+    if unknown:
+        print(f"warning: {path}: ignoring unknown record fields: {', '.join(sorted(unknown))}",
+              file=sys.stderr)
     return out
 
 

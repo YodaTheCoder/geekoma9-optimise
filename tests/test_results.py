@@ -62,3 +62,26 @@ def test_append_after_truncation_recovers(tmp_path: Path):
     append_record(p, b)
     append_record(p, c)
     assert read_records(p) == [a, b, c]
+
+
+def test_unknown_keys_ignored_and_logged_once(tmp_path: Path, capsys):
+    import json
+    from dataclasses import asdict
+    p = tmp_path / "results.jsonl"
+    rows = [{**asdict(rec("001", 1)), "gpu_offload": 0.9, "peak_swap_mib": 3},
+            {**asdict(rec("002", 1)), "gpu_offload": 1.0}]
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    assert [r.task for r in read_records(p)] == ["001", "002"]
+    err = capsys.readouterr().err
+    assert err.count("ignoring unknown") == 1 and "gpu_offload" in err and "peak_swap_mib" in err
+
+
+def test_missing_required_key_still_raises(tmp_path: Path):
+    import json
+    from dataclasses import asdict
+    p = tmp_path / "results.jsonl"
+    row = asdict(rec("001", 1))
+    del row["status"]
+    p.write_text(json.dumps(row) + "\n" + json.dumps(asdict(rec("002", 1))) + "\n")
+    with pytest.raises(ValueError, match="line 1"):
+        read_records(p)

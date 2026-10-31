@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -43,6 +44,14 @@ class ExperimentConfig:
 
 
 _TIERS = ("screening", "finalists", "all")
+# ids and run_ids become branch names and path parts.
+_SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+
+def check_safe_id(value: str, what: str) -> str:
+    if not _SAFE_ID.match(value) or ".." in value:
+        raise ConfigError(f"{what}: {value!r} must match {_SAFE_ID.pattern} and not contain '..'")
+    return value
 _RUNTIME_KINDS = ("ollama",)
 _AGENT_KINDS = ("null", "oracle", "command")
 
@@ -135,14 +144,17 @@ def load_config(path: Path) -> ExperimentConfig:
         raise ConfigError("runtime: missing")
     if "agent" not in d:
         raise ConfigError("agent: missing")
+    sampling = _str_dict(d, "sampling", "", (int, float))
+    if sampling:
+        raise ConfigError("sampling: not applied by any runtime yet; leave it empty")
     return ExperimentConfig(
-        id=_require(d, "id", str),
+        id=check_safe_id(_require(d, "id", str), "id"),
         task_set=_require(d, "task_set", str),
         tier=tier,
         runtime=_runtime(d["runtime"]),
         agent=_agent(d["agent"]),
         timeout_s=_typed(d, "timeout_s", int) if "timeout_s" in d else 2700,
         cooldown_s=_typed(d, "cooldown_s", int) if "cooldown_s" in d else 120,
-        sampling={k: float(v) for k, v in _str_dict(d, "sampling", "", (int, float)).items()},
+        sampling={k: float(v) for k, v in sampling.items()},
         notes=_typed(d, "notes", str) if "notes" in d else "",
     )
