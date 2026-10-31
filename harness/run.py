@@ -28,7 +28,7 @@ PROXY_LISTEN = "127.0.0.1:11500"
 ENDPOINT = f"http://{PROXY_LISTEN}"
 SAMPLE_INTERVAL_S = 5
 PROXY_FLUSH_S = 2  # let the proxy write its last usage row before it is stopped
-SCORE_TIMEOUT_S = 2400  # score.sh: import 300 + two GUT suites 600 each + extra 600, plus slack
+SCORE_TIMEOUT_S = 3000  # score.sh: import 300 + two GUT suites 600 each + extra 1300, plus slack
 SYSTEM_OLLAMA_STOP = "sudo -n systemctl stop ollama"
 SYSTEM_OLLAMA_START = "sudo -n systemctl start ollama"
 # Bracket trick: the pattern does not match the shell running pgrep itself.
@@ -136,7 +136,7 @@ def _fetch_score(remote: Remote, paths: AttemptPaths, local: Path):
         data = json.loads(remote.read_text(f"{paths.score_dir}/score.json"))
     except json.JSONDecodeError as e:
         raise InfraError(f"bad score.json: {e}") from e
-    for key in ("import_log", "hidden_xml", "regression_xml"):
+    for key in ("import_log", "regression_log", "hidden_log", "hidden_xml", "regression_xml"):
         data[key] = _fetch(remote, data.get(key), local / f"{key}.txt")
     score_json = local / "score.json"
     score_json.write_text(json.dumps(data))
@@ -208,7 +208,7 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
             bench.base_sha(cfg.task_set), bench.mirror, paths.score_dir, GODOT_BIN)),
             timeout=SCORE_TIMEOUT_S)
         with tempfile.TemporaryDirectory() as tmp:
-            parse_ok, hidden, regression = _fetch_score(remote, paths, Path(tmp))
+            parse_ok, hidden, regression, regression_expected = _fetch_score(remote, paths, Path(tmp))
         usage = summarize_usage(_read_optional(remote, paths.usage_log))
         samples = summarize_samples(_read_optional(remote, paths.samples_csv))
     except (InfraError, *INFRA_EXCEPTIONS) as e:
@@ -216,6 +216,7 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
                        wall_s=result.wall_s if result else 0.0, error=_short_error(e))
 
     status = decide_status(parse_ok=parse_ok, hidden=hidden, regression=regression,
+                           regression_expected=regression_expected,
                            agent_timed_out=result.timed_out)
     error = ""
     if usage.upstream_errors > 0 and status != "pass":
@@ -227,7 +228,8 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
         hidden_passed=hidden.passed if hidden else 0,
         hidden_total=hidden.total if hidden else 0,
         regressions_ok=regression is not None and regression.failed + regression.errors == 0
-        and regression.total > 0,
+        and regression.total > 0
+        and (regression_expected is None or regression.total == regression_expected),
         parse_ok=parse_ok, wall_s=result.wall_s,
         prompt_tokens=usage.prompt_tokens, gen_tokens=usage.gen_tokens,
         pp_tps=usage.pp_tps, tg_tps=usage.tg_tps,

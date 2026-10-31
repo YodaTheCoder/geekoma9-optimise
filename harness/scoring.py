@@ -26,7 +26,9 @@ def parse_junit(xml: str) -> TestCounts:
 
     A testcase with an <error> child is an error, else with a <failure> child
     it is a failure, else it passes. <skipped> (GUT pending/risky) testcases
-    are excluded entirely.
+    are excluded entirely. A testcase that made no assertions (`assertions="0"`)
+    fails: it proves nothing. Without the attribute (score_extra's checks) it is
+    judged by its children alone.
     """
     root = ET.fromstring(xml)
     passed = failed = errors = 0
@@ -35,14 +37,17 @@ def parse_junit(xml: str) -> TestCounts:
             continue
         if case.find("error") is not None:
             errors += 1
-        elif case.find("failure") is not None:
+        elif case.find("failure") is not None or case.get("assertions") == "0":
             failed += 1
         else:
             passed += 1
     return TestCounts(passed, failed, errors)
 
 
-_PARSE_ERROR = re.compile(r"SCRIPT ERROR: Parse Error|Failed to load script")
+# GUT skips a test script it cannot load ("could not be loaded") without a failure in the
+# JUnit file, so these are searched for in the import log and both suite logs.
+_PARSE_ERROR = re.compile(r"could not be loaded|Parse Error|Failed to load script")
+_LOGS = ("import_log", "regression_log", "hidden_log")
 
 
 def parse_ok_from_log(log: str) -> bool:
@@ -55,14 +60,19 @@ def decide_status(
     hidden: TestCounts | None,
     regression: TestCounts | None,
     agent_timed_out: bool,
+    regression_expected: int | None = None,
 ) -> Literal["pass", "fail", "timeout"]:
+    """`regression_expected` is the `func test_` count of the pristine regression files
+    (None for score.json files written before score.sh counted them)."""
     if agent_timed_out:
         return "timeout"
     if not parse_ok or hidden is None or regression is None:
         return "fail"
     if hidden.total == 0 or hidden.failed or hidden.errors:
         return "fail"
-    if regression.failed or regression.errors:
+    if regression.total == 0 or regression.failed or regression.errors:
+        return "fail"
+    if regression_expected is not None and regression.total != regression_expected:
         return "fail"
     return "pass"
 
@@ -76,13 +86,17 @@ def _load_counts(path: str | None, timed_out: bool) -> TestCounts | None:
         return None
 
 
-def load_score(score_json: str) -> tuple[bool, TestCounts | None, TestCounts | None]:
-    """Return (parse_ok, hidden, regression) from a score.json path."""
+def _read_log(path: str | None) -> str:
+    return Path(path).read_text(errors="replace") if path and Path(path).is_file() else ""
+
+
+def load_score(score_json: str) -> tuple[bool, TestCounts | None, TestCounts | None, int | None]:
+    """Return (parse_ok, hidden, regression, regression_expected) from a score.json path."""
     data = json.loads(Path(score_json).read_text())
-    log_path = data.get("import_log")
-    log = Path(log_path).read_text(errors="replace") if log_path and Path(log_path).is_file() else ""
-    parse_ok = not data.get("import_timed_out") and parse_ok_from_log(log)
+    parse_ok = not data.get("import_timed_out") and all(
+        parse_ok_from_log(_read_log(data.get(key))) for key in _LOGS)
     extra_failed = bool(data.get("extra_timed_out")) or data.get("extra_exit") not in (None, 0)
     hidden = _load_counts(data.get("hidden_xml"), bool(data.get("hidden_timed_out")) or extra_failed)
     regression = _load_counts(data.get("regression_xml"), bool(data.get("regression_timed_out")))
-    return parse_ok, hidden, regression
+    expected = data.get("regression_expected")
+    return parse_ok, hidden, regression, expected if isinstance(expected, int) else None

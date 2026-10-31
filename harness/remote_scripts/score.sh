@@ -35,6 +35,9 @@ if git -C "$mirror" cat-file -e "$base_sha:.gutconfig.json" 2>/dev/null; then
     restore+=(.gutconfig.json)
 fi
 git -C "$mirror" archive "$base_sha" "${restore[@]}" | tar -x -C "$project"
+# Expected regression count, from the pristine files: GUT silently skips a script it
+# cannot load, so a short JUnit file is a failure.
+regression_expected=$(cat "$project"/tests/regression/*.gd 2>/dev/null | grep -c '^func test_' || true)
 
 # 3. Hidden tests (the tests/ dir is optional: some tasks use score_extra.sh only).
 rm -rf "$project/tests/hidden"
@@ -72,7 +75,8 @@ hidden_exit=$rc hidden_timed_out=$timed_out
 # a stale plain-GUT result.
 extra_exit=null extra_timed_out=false
 if [ -f "$task_files/score_extra.sh" ]; then
-    run_timed 600 bash "$task_files/score_extra.sh" "$project" "$godot" "$out_dir" \
+    # 1300 s: 012's script runs up to four GUT suites of 300 s each.
+    run_timed 1300 bash "$task_files/score_extra.sh" "$project" "$godot" "$out_dir" \
         >"$out_dir/extra.log" 2>&1
     extra_exit=$rc extra_timed_out=$timed_out
     if [ "$rc" -ne 0 ]; then rm -f "$out_dir/hidden.xml"; fi
@@ -81,7 +85,7 @@ fi
 # 7. score.json
 OUT_DIR=$out_dir \
 IMPORT_EXIT=$import_exit IMPORT_TO=$import_timed_out \
-REG_EXIT=$regression_exit REG_TO=$regression_timed_out \
+REG_EXIT=$regression_exit REG_TO=$regression_timed_out REG_EXPECTED=$regression_expected \
 HID_EXIT=$hidden_exit HID_TO=$hidden_timed_out \
 EXTRA_EXIT=$extra_exit EXTRA_TO=$extra_timed_out \
 python3 - <<'PY'
@@ -99,9 +103,12 @@ score = {
     "regression_exit": int(os.environ["REG_EXIT"]),
     "regression_timed_out": os.environ["REG_TO"] == "true",
     "regression_xml": xml("regression.xml"),
+    "regression_log": str(out / "regression.log"),
+    "regression_expected": int(os.environ["REG_EXPECTED"]),
     "hidden_exit": int(os.environ["HID_EXIT"]),
     "hidden_timed_out": os.environ["HID_TO"] == "true",
     "hidden_xml": xml("hidden.xml"),
+    "hidden_log": str(out / "hidden.log"),
     "extra_exit": None if os.environ["EXTRA_EXIT"] == "null" else int(os.environ["EXTRA_EXIT"]),
     "extra_timed_out": os.environ["EXTRA_TO"] == "true",
 }

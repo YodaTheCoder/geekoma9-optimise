@@ -428,3 +428,22 @@ def test_proxy_probe_is_tcp_only():
     attempt(remote)
     assert any("/dev/tcp/127.0.0.1/11500" in c for c in remote.calls)
     assert not any("curl" in c for c in remote.calls)
+
+
+def test_short_regression_run_fails_and_logs_are_fetched():
+    class Short(BenchRemote):
+        def read_text(self, path):
+            if path.endswith("/score/score.json"):
+                d = json.loads(super().read_text(path))
+                return json.dumps({**d, "regression_expected": 3,
+                                   "regression_log": path.replace("score.json", "regression.log"),
+                                   "hidden_log": path.replace("score.json", "hidden.log")})
+            return super().read_text(path)
+    remote = Short()
+    reads = []
+    orig = remote.read_text
+    remote.read_text = lambda p: (reads.append(p), orig(p))[1]
+    rec = attempt(remote)  # regression.xml holds 2 testcases, the files define 3
+    assert rec.status == "fail" and not rec.regressions_ok
+    assert any(p.endswith("/score/regression.log") for p in reads)
+    assert any(p.endswith("/score/hidden.log") for p in reads)
