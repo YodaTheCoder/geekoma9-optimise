@@ -81,3 +81,30 @@ Add the public key `~/.ssh/agentbench_deploy.pub` as a **deploy key with write a
 `YodaTheCoder/godot-agent-bench` (Settings > Deploy keys). Until then the `deploy-key` check fails
 and attempt branches cannot be pushed. The check proves authentication only: tick **Allow write
 access** when adding the key, or pushes will fail even though the check passes.
+
+## Claude Code (frontier calibration only)
+
+Installed 2026-10-31 with Anthropic's native installer (`curl -fsSL https://claude.ai/install.sh`,
+inspected before running, `stable` channel): Claude Code 2.1.309 at `~/.local/bin/claude`, data in
+`~/.claude`. `~/.local/bin` is not on the non-interactive PATH, so configs use the absolute path.
+The owner logs in interactively (`ssh -t markn@geekoma9.local ~/.local/bin/claude`, then `/login`).
+Used only by `experiments/calibration-frontier`. Rollback: `rm -rf ~/.local/bin/claude
+~/.local/share/claude ~/.claude`.
+
+## Mac side: ssh over IPv4
+
+`geekoma9.local` resolves to an IPv6 link-local address first, and geekoma9's UFW drops IPv6
+port 22, so each connection stalled 10 s before falling back to IPv4 (enough to hit the harness's
+15 s ssh timeouts). The Mac's `~/.ssh/config` now has `Host geekoma9.local` / `AddressFamily inet`.
+Rollback: remove that block (backup at `~/.ssh/config.bak-20261031`).
+
+## Orchestrator: newbuntu.local
+
+Long runs are orchestrated from `newbuntu.local` (Ubuntu 24.04, wired, always on) inside `tmux`,
+so no laptop has to stay connected. Changes made there on 2026-10-31: geekoma9's host keys copied
+into `~/.ssh/known_hosts` from the Mac's (already trusted) copy; `Host geekoma9.local` /
+`AddressFamily inet` in `~/.ssh/config` (backup `~/.ssh/config.bak-20261031`); `tmux` via apt;
+`uv` 0.13.6 via Astral's installer into `~/.local/bin`; this repo copied to `~/geekoma9-optimise`.
+The owner adds newbuntu's `~/.ssh/id_rsa.pub` to geekoma9's `~/.ssh/authorized_keys`.
+Rollback: remove the known_hosts lines, the ssh config block and that authorized_keys line;
+`sudo apt remove tmux`; `rm ~/.local/bin/uv ~/.local/bin/uvx`; `rm -rf ~/geekoma9-optimise`.

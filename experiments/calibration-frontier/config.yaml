@@ -1,0 +1,22 @@
+id: calibration-frontier
+task_set: v1
+tier: all
+cooldown_s: 0
+notes: >-
+  Frontier calibration: Claude Code with Claude Opus on every v1 task, to show the tasks are
+  solvable and the tests fair, and to give an upper bound. The Ollama runtime is unused but
+  kept loaded so preflight matches the local experiments.
+runtime:
+  kind: ollama
+  model: qwen3-coder:30b
+  context: 65536
+agent:
+  kind: command
+  name: claude-code
+  version: 2.1.309
+  command: >-
+    /home/markn/.local/bin/claude -p --model opus --dangerously-skip-permissions
+    --output-format stream-json --verbose "$(cat {issue_file})"
+  steps_regex: '"type":"tool_use"'
+  env:
+    DISABLE_AUTOUPDATER: "1"
