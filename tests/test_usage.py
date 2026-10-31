@@ -416,3 +416,110 @@ def test_capture_trim_keeps_tail_usage(monkeypatch, tmp_path):
         assert (row["prompt_tokens"], row["gen_tokens"]) == (77, 88)
     finally:
         _stop(proxy, upstream)
+
+
+# ---------------------------------------------------------------- streamed / in-band errors
+
+inband_error = usage_proxy.inband_error
+
+
+@pytest.mark.parametrize("body", [
+    b'event: error\ndata: {"type":"error","error":{"type":"overloaded_error"}}\n\n',  # Anthropic
+    b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: {"error":{"message":"runner died"}}\n\n',
+    b'{"model":"m","response":"a","done":false}\n{"error":"llama runner process has terminated"}\n',
+])
+def test_inband_error_detected(body):
+    assert inband_error(body)
+
+
+@pytest.mark.parametrize("body", [
+    b'data: {"choices":[{"delta":{"content":"error"}}]}\n\ndata: [DONE]\n\n',
+    b'{"model":"m","response":"error: x","done":true}\n',
+    b'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    b"",
+])
+def test_no_inband_error(body):
+    assert not inband_error(body)
+
+
+def _row(**kw):
+    return json.dumps({"path": "/a", "status": 200, "upstream_error": False, **kw})
+
+
+def test_summarize_tps_from_streamed_rows_only():
+    lines = "\n".join([
+        _row(duration_s=3.0, ttft_s=1.0, prompt_tokens=1000, gen_tokens=40, streamed=True),
+        # non-streamed: ttft is about the whole duration, so its speeds are meaningless
+        _row(duration_s=5.0, ttft_s=4.999, prompt_tokens=5000, gen_tokens=500, streamed=False),
+        # rows from before the key existed were all streamed (OpenCode, Claude Code)
+        _row(duration_s=7.0, ttft_s=3.0, prompt_tokens=3000, gen_tokens=120),
+    ])
+    s = summarize_usage(lines)
+    assert s.prompt_tokens == 9000 and s.gen_tokens == 660
+    assert s.pp_tps == pytest.approx(1000.0) and s.tg_tps == pytest.approx(160 / 6)
+
+
+def test_summarize_no_streamed_rows_has_no_speeds():
+    s = summarize_usage(_row(duration_s=5.0, ttft_s=4.9, prompt_tokens=10, gen_tokens=5,
+                             streamed=False))
+    assert s.prompt_tokens == 10 and s.gen_tokens == 5
+    assert s.pp_tps is None and s.tg_tps is None
+
+
+def _serve_body(ctype, body, chunked=True):
+    class H(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            if chunked:
+                self.send_header("Transfer-Encoding", "chunked")
+                self.end_headers()
+                self.wfile.write(b"%x\r\n%s\r\n0\r\n\r\n" % (len(body), body))
+            else:
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+    return H
+
+
+def _one_row(tmp_path, handler):
+    log = tmp_path / "usage.jsonl"
+    upstream, proxy = _start(handler, log)
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", proxy.server_address[1], timeout=10)
+        c.request("POST", "/x", body=b"{}")
+        c.getresponse().read()
+        c.close()
+        return _rows(log, 1)[0]
+    finally:
+        _stop(proxy, upstream)
+
+
+@pytest.mark.live
+def test_proxy_flags_inband_stream_error(tmp_path):
+    body = b'{"response":"a","done":false}\n{"error":"llama runner process has terminated"}\n'
+    row = _one_row(tmp_path, _serve_body("application/x-ndjson", body))
+    assert row["status"] == 200 and row["streamed"] is True and row["upstream_error"] is True
+
+
+@pytest.mark.live
+def test_proxy_logs_streamed_flag(tmp_path):
+    row = _one_row(tmp_path, _serve_body("text/event-stream", b"data: {}\n\n"))
+    assert row["streamed"] is True and row["upstream_error"] is False
+    body = json.dumps({"usage": {"prompt_tokens": 1, "completion_tokens": 2}}).encode()
+    (tmp_path / "b").mkdir()
+    row = _one_row(tmp_path / "b", _serve_body("application/json", body, chunked=False))
+    assert row["streamed"] is False and row["upstream_error"] is False
+
+
+@pytest.mark.live
+def test_non_streamed_error_key_is_not_inband_error(tmp_path):
+    # a plain JSON reply is not a stream: only HTTP status decides (4xx is the agent's fault)
+    row = _one_row(tmp_path, _serve_body("application/json", b'{"error":"x"}', chunked=False))
+    assert row["streamed"] is False and row["upstream_error"] is False
