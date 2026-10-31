@@ -71,3 +71,25 @@ def test_unreachable_host_is_a_failed_check():
         def run(self, cmd, timeout=None, check=True):
             raise RemoteError("down")
     assert not pv.check_ollama(Dead()).ok
+
+
+def test_setup_failure_reported_not_traceback(capsys):
+    class NoSync(ProvRemote):
+        def sync_dir(self, local, remote_path):
+            raise RemoteError("rsync: connection refused")
+    assert pv.provision(NoSync()) == 1
+    out = capsys.readouterr().out
+    assert "FAIL setup: rsync: connection refused" in out and "FAILED (setup)" in out
+
+
+def test_clone_failure_reported(capsys):
+    remote = ProvRemote()
+    orig = remote.run
+
+    def run(cmd, timeout=None, check=True):
+        if "git clone --mirror" in cmd:
+            raise subprocess.CalledProcessError(128, cmd, "", "fatal: no network")
+        return orig(cmd, timeout, check)
+    remote.run = run
+    assert pv.provision(remote) == 1
+    assert "FAIL setup: fatal: no network" in capsys.readouterr().out

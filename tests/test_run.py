@@ -290,6 +290,58 @@ def test_system_ollama_restored_when_runtime_start_fails(tmp_path):
     assert remote.calls[-1] == "sudo -n systemctl start ollama"
 
 
+class StartFlaky(BenchRemote):
+    def __init__(self, fail_times, error=None):
+        super().__init__()
+        self.fail_times, self.error, self.start_calls = fail_times, error, 0
+
+    def run(self, cmd, timeout=None, check=True):
+        if cmd == "sudo -n systemctl start ollama":
+            self.start_calls += 1
+            if self.start_calls <= self.fail_times:
+                if self.error:
+                    raise self.error
+                return subprocess.CompletedProcess([], 1, "", "")
+        return super().run(cmd, timeout, check)
+
+
+def test_system_ollama_start_retried_until_ok(tmp_path, capsys):
+    remote = StartFlaky(2, RemoteError("ssh 255"))
+    experiment(tmp_path, remote, FakeAgent())
+    assert remote.start_calls == 3 and "NOT restarted" not in capsys.readouterr().err
+
+
+def test_system_ollama_start_nonzero_exit_retried(tmp_path, capsys):
+    remote = StartFlaky(1)
+    experiment(tmp_path, remote, FakeAgent())
+    assert remote.start_calls == 2 and "NOT restarted" not in capsys.readouterr().err
+
+
+def test_system_ollama_start_always_fails_warns_without_raising(tmp_path, capsys):
+    remote = StartFlaky(99, RemoteError("ssh 255"))
+    recs, _, _ = experiment(tmp_path, remote, FakeAgent())  # normal run completes
+    assert len(recs) == len(SCREENING) and remote.start_calls == 3
+    assert "system Ollama NOT restarted" in capsys.readouterr().err
+
+
+def test_start_failure_does_not_mask_original_error(tmp_path, capsys):
+    remote = StartFlaky(99, RemoteError("ssh 255"))
+    with pytest.raises(ValueError, match="agent bug"):
+        experiment(tmp_path, remote, FakeAgent(ValueError("agent bug")))
+    assert "system Ollama NOT restarted" in capsys.readouterr().err
+
+
+def test_runtime_stop_failure_does_not_mask_original_error(tmp_path, capsys):
+    class BadStop(FakeRuntime):
+        def stop(self, remote):
+            raise RemoteError("stop failed")
+    remote = BenchRemote()
+    with pytest.raises(ValueError, match="agent bug"):
+        experiment(tmp_path, remote, FakeAgent(ValueError("agent bug")), runtime=BadStop())
+    assert "runtime stop failed" in capsys.readouterr().err
+    assert remote.calls[-1] == "sudo -n systemctl start ollama"
+
+
 def test_resume_skips_done(tmp_path):
     (tmp_path / "run_id").write_text("e0-202601010000\n")
     seed = attempt(BenchRemote())

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -53,6 +54,23 @@ def _kill_strays(remote: Remote) -> None:
         remote.run("pkill -KILL" + PREFLIGHT_CMD.removeprefix("pgrep"), check=False)
     except RemoteError:
         pass  # host unreachable; the runtime restart / retry records it
+
+
+def _restore_system_ollama(remote: Remote, clock, attempts: int = 3) -> None:
+    """Start the owner's Ollama again; retry, and warn loudly (never raise) if it won't start."""
+    detail = ""
+    for i in range(attempts):
+        if i:
+            clock.sleep(2)
+        try:
+            r = remote.run(SYSTEM_OLLAMA_START, check=False)
+            if r.returncode == 0:
+                return
+            detail = f"exit {r.returncode}"
+        except Exception as e:  # noqa: BLE001
+            detail = _short_error(e)
+    print(f"system Ollama NOT restarted ({detail}) \N{EM DASH} run: sudo systemctl start ollama",
+          file=sys.stderr)
 
 
 def preflight(remote: Remote, runtime: Runtime) -> None:
@@ -285,7 +303,9 @@ def run_experiment(cfg: ExperimentConfig, exp_dir: Path, *, remote: Remote, benc
                         f"stray processes survived pkill before retrying {task} r{repeat}: "
                         f"{' '.join(stray)}")
     finally:
+        # Neither cleanup step may raise: that would mask the error that got us here.
         try:
             runtime.stop(remote)
-        finally:
-            remote.run(SYSTEM_OLLAMA_START, check=False)
+        except Exception as e:  # noqa: BLE001
+            print(f"warning: runtime stop failed: {_short_error(e)}", file=sys.stderr)
+        _restore_system_ollama(remote, clock)

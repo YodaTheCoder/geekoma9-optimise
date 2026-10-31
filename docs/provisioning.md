@@ -44,8 +44,40 @@ system Ollama with `sudo -n systemctl stop ollama` before the run and starts it 
    Rollback: delete the key pair, the config block, and the github.com line in known_hosts.
 4. **Mirror and scripts** under `~/agentbench/` (`bench.git`, `bin/`). Rollback: `rm -rf` those.
 
+5. **Godot 4.7.2-stable** (installed in Task 10, unchanged here). Official release
+   `https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip`;
+   SHA512 `9aa00f7a605200940bce3027a567b782f49bd8e940dd06ae9e987bd65aee1b1467edd56ed84fcdcbdd44354bf613bdbb4e5d2913e925850368e150c59ed54c65`
+   verified against the release's `SHA512-SUMS.txt` (`sha512sum -c`: OK). Installed as
+   `~/agentbench/opt/godot/Godot_v4.7.2-stable_linux.x86_64` with symlink
+   `~/agentbench/opt/godot/godot`; the zip and sums file are kept in `~/agentbench/dl/`.
+   Rollback: `rm -rf ~/agentbench/opt/godot`.
+
+### Pre/post state of the ACL targets
+
+Before the change there were no ACL entries (plain modes only; `/usr/share/ollama` is
+`drwxr-x--- ollama ollama`). The ACLs that exist now (`sudo getfacl -p`, read-only):
+
+```
+# /usr/share/ollama           user::rwx user:markn:--x group::r-x mask::r-x other::---
+# /usr/share/ollama/.ollama   user::rwx user:markn:--x group::r-x mask::r-x other::r-x
+# .../.ollama/models          user::rwx user:markn:r-x group::r-x mask::r-x other::r-x
+#                             default:user::rwx default:user:markn:r-x default:group::r-x
+#                             default:mask::r-x default:other::r-x
+```
+
+The rollback (`setfacl -x`, `setfacl -k`) assumes no other default ACLs were present, which held
+before this change.
+
+## Recovery if the orchestrator is hard-killed
+
+The harness stops the owner's Ollama for a run and restores it in a `finally`. If the orchestrator
+is killed (SIGKILL, power loss) mid-run, restore it by hand: `sudo systemctl start ollama`.
+If the automatic restore fails after 3 tries the harness prints
+`system Ollama NOT restarted ... run: sudo systemctl start ollama` to stderr.
+
 ## Owner action still required
 
 Add the public key `~/.ssh/agentbench_deploy.pub` as a **deploy key with write access** on
 `YodaTheCoder/godot-agent-bench` (Settings > Deploy keys). Until then the `deploy-key` check fails
-and attempt branches cannot be pushed.
+and attempt branches cannot be pushed. The check proves authentication only: tick **Allow write
+access** when adding the key, or pushes will fail even though the check passes.

@@ -95,15 +95,17 @@ CHECKS = (check_python, check_godot, check_ollama, check_deploy_key, check_sudo,
 
 def provision(remote: Remote, scripts_src: Path = SCRIPTS_SRC) -> int:
     """Sync scripts, ensure the mirror, run every check. Non-zero names the first failure."""
-    remote.run(f"mkdir -p {ROOT}/bin")
-    remote.sync_dir(scripts_src, f"{ROOT}/bin")
-    remote.run(f"chmod +x {ROOT}/bin/*")
-    print(f"synced remote scripts to {ROOT}/bin")
     try:
+        remote.run(f"mkdir -p {ROOT}/bin")
+        remote.sync_dir(scripts_src, f"{ROOT}/bin")
+        remote.run(f"chmod +x {ROOT}/bin/*")
+        print(f"synced remote scripts to {ROOT}/bin")
         remote.run(f"test -d {shlex.quote(MIRROR)} || git clone --mirror "
                    f"{MIRROR_CLONE_URL} {shlex.quote(MIRROR)}", timeout=300)
-    except subprocess.CalledProcessError as e:
-        print(f"FAIL mirror: clone failed: {(e.stderr or '').strip()}")
+    except (RemoteError, subprocess.CalledProcessError) as e:
+        detail = (getattr(e, "stderr", None) or str(e)).strip()
+        print(f"FAIL setup: {detail}")
+        print("provision: FAILED (setup)")
         return 1
     print(f"mirror present at {MIRROR}")
     results = [check(remote) for check in CHECKS]
