@@ -11,6 +11,7 @@ from harness.config import ConfigError, ExperimentConfig, load_config
 from harness.remote import Remote
 from harness.report import render_markdown, summarize, write_readme
 from harness.results import read_records
+from harness.review import DEFAULT_BENCH, review_experiment
 from harness.run import run_experiment
 from harness.tiers import tier_plan
 
@@ -74,6 +75,10 @@ def cmd_report(args) -> int:
     return 0
 
 
+def cmd_review(args) -> int:
+    return review_experiment(Path(args.exp_dir), bench=Path(args.bench))
+
+
 def cmd_not_implemented(args) -> int:
     print(f"harness {args.command}: not implemented yet", file=sys.stderr)
     return 2
@@ -95,7 +100,8 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(func=cmd_report)
     s = sub.add_parser("review", help="frontier review of passing attempts")
     s.add_argument("exp_dir")
-    s.set_defaults(func=cmd_not_implemented)
+    s.add_argument("--bench", default=DEFAULT_BENCH, help="local benchmark repo clone")
+    s.set_defaults(func=cmd_review)
     s = sub.add_parser("provision", help="set up geekoma9")
     s.set_defaults(func=cmd_not_implemented)
     args = p.parse_args(argv)
