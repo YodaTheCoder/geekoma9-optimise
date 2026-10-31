@@ -19,6 +19,11 @@ class ProvRemote(FakeRemote):
         self.reply("systemctl --version", stdout="systemd 255 (255.4)\n")
         self.reply("Linger", stdout="Linger=yes\n")
         self.reply("manifests", stdout="registry.ollama.ai\n")
+        self.reply("id -u agentrun", stdout="1001\n")
+        self.reply("sudo -n -l -U agentrun", stdout="User agentrun is not allowed to run sudo on geekoma9.\n")
+        self.reply("ls -d /home/markn/agentbench/runs/*/*/work",
+                   stdout="/home/markn/agentbench/runs/e0-1/001-a-r1/work\n")
+        self.reply("test -r", returncode=1)  # agentrun can read neither the mirror nor attempts
 
     def sync_dir(self, local, remote_path):
         self.synced.append((str(local), remote_path))
@@ -93,3 +98,48 @@ def test_clone_failure_reported(capsys):
     remote.run = run
     assert pv.provision(remote) == 1
     assert "FAIL setup: fatal: no network" in capsys.readouterr().out
+
+
+def test_agent_user_ok():
+    remote = ProvRemote()
+    c = pv.check_agent_user(remote)
+    assert c.name == "agent-user" and c.ok, c.detail
+    calls = "\n".join(remote.calls)
+    assert "sudo -n -u agentrun test -r /home/markn/agentbench/bench.git" in calls
+    assert "sudo -n -u agentrun test -r /home/markn/agentbench/runs/e0-1/001-a-r1/work" in calls
+    assert "sudo -n -u agentrun test -x /home/markn/agentbench/opt/godot/godot" in calls
+
+
+def test_agent_user_missing():
+    remote = ProvRemote()
+    failing(remote, "id -u agentrun", stdout="id: 'agentrun': no such user")
+    c = pv.check_agent_user(remote)
+    assert not c.ok and "no such user" in c.detail
+
+
+def test_agent_user_with_sudo_rights_fails():
+    remote = ProvRemote()
+    failing(remote, "sudo -n -l -U agentrun", rc=0,
+            stdout="User agentrun may run the following commands on geekoma9:\n    (ALL) ALL")
+    c = pv.check_agent_user(remote)
+    assert not c.ok and "sudo" in c.detail
+
+
+def test_agent_user_can_read_mirror_fails():
+    remote = ProvRemote()
+    failing(remote, "test -r /home/markn/agentbench/bench.git", rc=0, stdout="")
+    c = pv.check_agent_user(remote)
+    assert not c.ok and "bench.git" in c.detail
+
+
+def test_agent_user_can_read_other_attempt_fails():
+    remote = ProvRemote()
+    failing(remote, "test -r /home/markn/agentbench/runs/", rc=0, stdout="")
+    c = pv.check_agent_user(remote)
+    assert not c.ok and "001-a-r1" in c.detail
+
+
+def test_agent_user_cannot_run_godot_fails():
+    remote = ProvRemote()
+    failing(remote, "test -x", rc=1, stdout="")
+    assert not pv.check_agent_user(remote).ok

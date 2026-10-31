@@ -13,6 +13,7 @@ run; the exit code is non-zero and names the first failure):
 | sudo | `sudo -n systemctl --version` works (passwordless sudo; Ollama is never stopped by a check) |
 | linger | `loginctl show-user markn -p Linger` is `Linger=yes` |
 | model-store | markn can `ls /usr/share/ollama/.ollama/models/manifests` |
+| agent-user | `agentrun` exists, `sudo -n -l -U agentrun` shows no sudo rights, markn can `sudo -n -u agentrun`, agentrun can run Godot, and `sudo -n -u agentrun test -r` fails on `~/agentbench/bench.git` and on an earlier attempt's `work/` |
 
 Godot version normalisation: `.godot-version` holds `4.7.2-stable`, `godot --version` prints
 `4.7.2.stable.official.<hash>`. The pin has `-` replaced by `.` and is matched as a prefix
@@ -67,6 +68,65 @@ Before the change there were no ACL entries (plain modes only; `/usr/share/ollam
 
 The rollback (`setfacl -x`, `setfacl -k`) assumes no other default ACLs were present, which held
 before this change.
+
+## Agent user `agentrun` (one-time setup, not yet done)
+
+Command agents (OpenCode, Claude Code, ...) run as the unprivileged user `agentrun`, so they cannot
+read or change the hidden tests, the reference solutions, the scorer or earlier attempts. The harness
+does the per-attempt part itself:
+
+- `CommandAgent` runs the agent as `sudo -n -u agentrun -H bash -c <command>` inside the usual
+  `setsid`/`timeout` wrapper. Before the run it gives the workdir and issue file to the agent
+  (`sudo -n chown -R agentrun: <workdir> <issue>`), and takes them back afterwards
+  (`sudo -n chown -R markn: ...`) before the commit. `agent.log` is opened by the wrapper and stays
+  markn's. After the run it kills the wrapper's session and every `agentrun` process
+  (`sudo -n pkill -KILL -s <sid>`, `sudo -n pkill -KILL -u agentrun`).
+- Each attempt root is created `0711` (its run folder too): the agent reaches its workdir and issue by
+  path but can list nothing. The task files (hidden tests, `solution.patch`, `score_extra.sh`, ...)
+  are exported only after the agent has exited and no `agentrun` process is left, into
+  `<attempt>/score/task` inside the `0700` folder `score/`. After scoring, `score/task` and
+  `score/project` are deleted (logs, XML and `score.json` are kept) and the attempt root becomes `0700`.
+  At run start every older attempt root is made `0700` and every run folder `0711`.
+- Preflight fails if any `agentrun` process exists; the stray kill also kills them.
+- The oracle applies `solution.patch` straight from the mirror; null and oracle run as markn.
+
+One-time setup on geekoma9 (run as markn, who has passwordless sudo):
+
+```
+sudo useradd --create-home --shell /bin/bash --user-group agentrun   # no sudo group, no password
+sudo chmod 711 /home/markn /home/markn/agentbench /home/markn/agentbench/runs
+sudo chmod 700 /home/markn/agentbench/bench.git
+sudo chmod -R u=rwX,go=rX /home/markn/agentbench/opt                 # agents run Godot themselves
+sudo install -d -o agentrun -g agentrun -m 700 /home/agentrun/.config/agentbench
+sudo install -o agentrun -g agentrun -m 600 /home/markn/.config/agentbench/opencode.json \
+    /home/agentrun/.config/agentbench/opencode.json
+echo agentrun | sudo tee -a /etc/cron.deny /etc/at.deny             # no jobs that outlive the attempt
+sudo find /home/markn/agentbench/runs -mindepth 2 -maxdepth 2 -type d -exec chmod 700 {} +
+```
+
+Then `uv run harness provision` must show `OK   agent-user`. Things to confirm on the live host:
+`sudo -n -l -U agentrun` prints "is not allowed to run sudo"; `sudo -n -u agentrun -H opencode --version`
+works (OpenCode is in `/usr/local/bin`, on sudo's `secure_path`); geekoma9's sudoers sets `use_pty`,
+which is why the harness kills by user and not only by session. Before the change the modes were
+`/home/markn` 750, and `~/agentbench`, `runs/`, `bench.git/`, `opt/`, `~/.config/agentbench` 775.
+
+Rollback:
+
+```
+sudo userdel -r agentrun
+sudo sed -i '/^agentrun$/d' /etc/cron.deny /etc/at.deny
+sudo chmod 750 /home/markn
+sudo chmod 775 /home/markn/agentbench /home/markn/agentbench/runs /home/markn/agentbench/bench.git
+sudo chmod -R g+w /home/markn/agentbench/opt
+```
+
+(The attempt folders' `0700`/`0711` modes can stay: markn owns them.)
+
+Frontier calibration: a calibration run (`experiments/calibration-frontier`) now runs Claude Code as
+`agentrun`, so `claude` must be logged in as that user (`ssh -t markn@geekoma9.local sudo -u agentrun
+-H /home/markn/.local/bin/claude`, then `/login`); its credentials live in `/home/agentrun/.claude`.
+`~/.local` and `~/.local/share/claude` must be traversable/readable by agentrun for the absolute path
+in the config to work (or install Claude Code for agentrun and change the path).
 
 ## Recovery if the orchestrator is hard-killed
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -12,11 +13,12 @@ from harness.agents import make_agent
 from harness.agents.base import Agent, AgentResult
 from harness.bench import BenchRepo
 from harness.config import ExperimentConfig
-from harness.paths import ROOT, AttemptPaths, attempt_paths
+from harness.paths import AGENT_USER, ROOT, AttemptPaths, attempt_paths
 from harness.remote import Remote, RemoteError
 from harness.results import AttemptRecord, append_record, pending, read_records
 from harness.runtimes import make_runtime
 from harness.runtimes.base import Runtime
+from harness.runtimes.ollama import JOURNALCTL, UNIT_NAME
 from harness.sampling import summarize_samples
 from harness.scoring import decide_status, load_score
 from harness.tiers import tier_plan
@@ -33,6 +35,10 @@ SYSTEM_OLLAMA_STOP = "sudo -n systemctl stop ollama"
 SYSTEM_OLLAMA_START = "sudo -n systemctl start ollama"
 # Bracket trick: the pattern does not match the shell running pgrep itself.
 PREFLIGHT_CMD = "pgrep -u markn -f '[g]odot|agentbench/[r]uns/|agentbench/[b]in/'"
+# Nothing may run as the agent user between attempts (and before task files are exported).
+AGENT_PGREP = f"pgrep -u {AGENT_USER}"
+# Kernel log and runtime journal lines that mean something was OOM-killed.
+OOM_PATTERN = "out of memory|oom-kill|killed process"
 # Exceptions that make an attempt infra_error instead of aborting the experiment.
 INFRA_EXCEPTIONS = (RemoteError, subprocess.CalledProcessError)
 
@@ -45,15 +51,51 @@ class HostDirtyError(Exception):
     """Stray processes survived the cleanup kill: stop the experiment (not an attempt record)."""
 
 
+def _agent_procs(remote: Remote) -> list[str]:
+    return remote.run(AGENT_PGREP, check=False).stdout.split()
+
+
 def _strays(remote: Remote) -> list[str]:
-    return remote.run(PREFLIGHT_CMD, check=False).stdout.split()
+    return remote.run(PREFLIGHT_CMD, check=False).stdout.split() + _agent_procs(remote)
 
 
 def _kill_strays(remote: Remote) -> None:
     try:
         remote.run("pkill -KILL" + PREFLIGHT_CMD.removeprefix("pgrep"), check=False)
+        remote.run(f"sudo -n pkill -KILL -u {AGENT_USER}", check=False)
     except RemoteError:
         pass  # host unreachable; the runtime restart / retry records it
+
+
+def _oom_victim(remote: Remote, since: int) -> str | None:
+    """Name of a process OOM-killed since `since` (epoch s), from the kernel log and the
+    runtime unit's journal; None if there was none."""
+    r = remote.run(
+        f"{{ sudo -n journalctl -k --since @{since} --no-pager; "
+        f"{JOURNALCTL} -u {UNIT_NAME} --since @{since} --no-pager; }} 2>/dev/null "
+        f"| grep -iE {shlex.quote(OOM_PATTERN)} || true", timeout=60, check=False)
+    text = r.stdout.strip()
+    if not text:
+        return None
+    m = (re.search(r"Killed process \d+ \(([^)]+)\)", text)
+         or re.search(r"task=([^,\s]+)", text))
+    return m.group(1) if m else text.splitlines()[0][:120]
+
+
+def _check_oom(remote: Remote, since: int, phase: str) -> None:
+    victim = _oom_victim(remote, since)
+    if victim:
+        raise InfraError(f"OOM kill during {phase}: {victim}")
+
+
+def _quiet(remote: Remote, cmd: str) -> None:
+    """Best-effort cleanup step: report, never raise."""
+    try:
+        r = remote.run(cmd, check=False)
+        if r.returncode:
+            print(f"warning: `{cmd}` exited {r.returncode}", file=sys.stderr)
+    except RemoteError as e:
+        print(f"warning: `{cmd}` failed: {_short_error(e)}", file=sys.stderr)
 
 
 def _restore_system_ollama(remote: Remote, clock, attempts: int = 3) -> None:
@@ -71,6 +113,13 @@ def _restore_system_ollama(remote: Remote, clock, attempts: int = 3) -> None:
             detail = _short_error(e)
     print(f"system Ollama NOT restarted ({detail}) - run: sudo systemctl start ollama",
           file=sys.stderr)
+
+
+# Attempt roots left open (0711) by an interrupted run, and run folders from before the
+# agent user existed: close them so the agent user cannot read earlier attempts.
+CLOSE_OLD_ATTEMPTS = (
+    f"find {ROOT}/runs -mindepth 1 -maxdepth 1 -type d -exec chmod 711 {{}} + && "
+    f"find {ROOT}/runs -mindepth 2 -maxdepth 2 -type d -perm /077 -exec chmod 700 {{}} +")
 
 
 def preflight(remote: Remote, runtime: Runtime) -> None:
@@ -161,7 +210,8 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
     """Run one attempt end to end. Infrastructure failures become an infra_error record."""
     paths = attempt_paths(run_id, task, repeat)
     branch = f"exp/{run_id}/{task}-r{repeat}"
-    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(clock.time()))
+    since = int(clock.time())
+    started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(since))
     # Pinned on every record, infra_error included; runtime fields are added when available.
     versions: dict[str, str] = {
         "agent": f"{cfg.agent.name} {cfg.agent.version}".strip(),
@@ -174,7 +224,6 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
         preflight(remote, runtime)
         versions = {**runtime.versions(remote), **versions}
         bench.prepare_workdir(paths, cfg.task_set, task, branch)
-        bench.export_task_files(cfg.task_set, task, paths.task_files)
 
         scripts = shlex.quote(scripts_dir)
         pids: list[int] = []
@@ -202,13 +251,30 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
             for pid in pids:
                 _stop_helper(remote, pid)
 
+        _check_oom(remote, since, "agent run")
         pushed = bench.commit_and_push(paths, branch, f"{run_id} {task} r{repeat}")
-        remote.run(" ".join(shlex.quote(a) for a in (
-            "bash", f"{scripts_dir}/score.sh", paths.workdir, paths.task_files,
-            bench.base_sha(cfg.task_set), bench.mirror, paths.score_dir, GODOT_BIN)),
-            timeout=SCORE_TIMEOUT_S)
-        with tempfile.TemporaryDirectory() as tmp:
-            parse_ok, hidden, regression, regression_expected = _fetch_score(remote, paths, Path(tmp))
+        # Hidden tests, solution and scorer appear only now, in a 0700 folder the agent never
+        # saw, and only once nothing runs as the agent user.
+        survivors = _agent_procs(remote)
+        if survivors:
+            raise InfraError(f"{AGENT_USER} processes survived the agent: {' '.join(survivors)}")
+        try:
+            remote.run(f"mkdir -p -m 700 {shlex.quote(paths.score_dir)}")
+            bench.export_task_files(cfg.task_set, task, paths.task_files)
+            remote.run(" ".join(shlex.quote(a) for a in (
+                "bash", f"{scripts_dir}/score.sh", paths.workdir, paths.task_files,
+                bench.base_sha(cfg.task_set), bench.mirror, paths.score_dir, GODOT_BIN)),
+                timeout=SCORE_TIMEOUT_S)
+            with tempfile.TemporaryDirectory() as tmp:
+                parse_ok, hidden, regression, regression_expected = _fetch_score(
+                    remote, paths, Path(tmp))
+        finally:
+            # Keep logs, XML and score.json; drop the hidden material and the scored copy,
+            # and close the attempt to later agents.
+            _quiet(remote, f"rm -rf {shlex.quote(paths.task_files)} "
+                           f"{shlex.quote(paths.score_dir + '/project')}")
+            _quiet(remote, f"chmod 700 {shlex.quote(paths.root)}")
+        _check_oom(remote, since, "scoring")
         usage = summarize_usage(_read_optional(remote, paths.usage_log))
         samples = summarize_samples(_read_optional(remote, paths.samples_csv))
     except (InfraError, *INFRA_EXCEPTIONS) as e:
@@ -261,6 +327,7 @@ def run_experiment(cfg: ExperimentConfig, exp_dir: Path, *, remote: Remote, benc
     todo = pending(tier_plan(cfg), read_records(results))
 
     bench.update()
+    remote.run(f"mkdir -p {ROOT}/runs && {CLOSE_OLD_ATTEMPTS}")
     # The owner's system Ollama owns the GPU and port 11434: stop it for the run, and bring it
     # back afterwards whatever happens (the stop sits inside the try so a half-failed stop is
     # still followed by a start).

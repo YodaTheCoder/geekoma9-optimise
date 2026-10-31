@@ -6,10 +6,8 @@ import time
 
 from harness.agents.base import AgentResult
 from harness.config import AgentConfig, ConfigError
-from harness.paths import AttemptPaths
+from harness.paths import AGENT_USER, OWNER, AttemptPaths
 from harness.remote import Remote, RemoteError
-
-_TIMEOUT_CODES = (124, 137)
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -42,26 +40,49 @@ class CommandAgent:
             endpoint=endpoint, model=model, log=paths.agent_log)
         exports = "".join(f"export {k}={shlex.quote(v)}; " for k, v in cfg.env.items())
         sid = f"{paths.root}/agent.sid"
+        # The agent runs as AGENT_USER (no sudo, no access to the mirror or other attempts);
+        # the wrapper, its log redirection and the kills stay with the owner.
         inner = (f"echo $$ > {shlex.quote(sid)}; "
-                 f"exec timeout -k 30 {int(timeout_s)} bash -c {shlex.quote(exports + rendered)}")
+                 f"exec timeout -k 30 {int(timeout_s)} sudo -n -u {AGENT_USER} -H "
+                 f"bash -c {shlex.quote(exports + rendered)}")
         # stdin from /dev/null: the ssh session's stdin never closes, and agents that read
         # piped input (OpenCode `run`) would wait on it forever.
         cmd = (f"cd {shlex.quote(paths.workdir)} && "
                f"setsid --wait bash -c {shlex.quote(inner)} "
                f"< /dev/null > {shlex.quote(paths.agent_log)} 2>&1")
+        own = f"{shlex.quote(paths.workdir)} {shlex.quote(paths.issue_file)}"
+        give_back = f"sudo -n chown -R {OWNER}: {own}"
+        remote.run(f"sudo -n chown -R {AGENT_USER}: {own}")
+        try:
+            r, wall = self._run_and_kill(remote, cmd, sid, timeout_s)
+        except BaseException:
+            try:  # best effort: the original error matters more
+                remote.run(give_back, check=False)
+            except RemoteError:
+                pass
+            raise
+        remote.run(give_back)
+        steps = None
+        if cfg.steps_regex:
+            steps = len(re.findall(cfg.steps_regex, remote.read_text(paths.agent_log)))
+        # 137 is `timeout -k` only once the budget is spent; earlier it is a SIGKILL from
+        # elsewhere (the OOM killer), which the orchestrator's kernel-log check reports.
+        timed_out = r.returncode == 124 or (r.returncode == 137 and wall >= timeout_s)
+        return AgentResult(exit_code=r.returncode, timed_out=timed_out, wall_s=wall, steps=steps)
+
+    @staticmethod
+    def _run_and_kill(remote: Remote, cmd: str, sid: str, timeout_s: int):
         start = time.monotonic()
         # ssh timeout outlasts the agent's own so ssh never cuts it first.
         try:
             r = remote.run(cmd, timeout=timeout_s + 120, check=False)
         finally:
             wall = time.monotonic() - start
-            # Kill survivors in the agent's session, even if ssh dropped.
+            # Kill survivors, even if ssh dropped: the wrapper's session, and every process of
+            # the agent user (sudo may run the command in a session of its own).
             try:
-                remote.run(f'pkill -KILL -s "$(cat {shlex.quote(sid)})"', check=False)
+                remote.run(f'sudo -n pkill -KILL -s "$(cat {shlex.quote(sid)})"; '
+                           f"sudo -n pkill -KILL -u {AGENT_USER}", check=False)
             except RemoteError:
                 pass
-        steps = None
-        if cfg.steps_regex:
-            steps = len(re.findall(cfg.steps_regex, remote.read_text(paths.agent_log)))
-        return AgentResult(exit_code=r.returncode, timed_out=r.returncode in _TIMEOUT_CODES,
-                           wall_s=wall, steps=steps)
+        return r, wall

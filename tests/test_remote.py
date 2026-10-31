@@ -79,7 +79,8 @@ def test_attempt_paths():
     root = "/home/markn/agentbench/runs/e0-202611010100/001-health-clamp-r2"
     assert p.root == root
     assert p.workdir == f"{root}/work"
-    assert p.task_files == f"{root}/task"
+    assert p.task_files == f"{root}/score/task"  # exported after the agent, never beside it
+    assert p.task == "001-health-clamp"
     assert p.issue_file == f"{root}/issue.md"
     assert p.agent_log == f"{root}/agent.log"
     assert p.usage_log == f"{root}/usage.jsonl"

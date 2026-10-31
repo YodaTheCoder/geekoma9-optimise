@@ -116,11 +116,29 @@ def test_prepare_workdir_replaces_leftover_attempt(tmp_path):
     # Resuming after an interrupted attempt finds its folder still there; git refuses to clone into it.
     mirror, base, _ = _bench_mirror(tmp_path)
     paths = _local_paths(tmp_path)
-    Path(paths.workdir).mkdir(parents=True)
-    (Path(paths.workdir) / "stale.txt").write_text("left by the interrupted attempt")
-    (Path(paths.root) / "agent.log").write_text("old log")
+    repo = BenchRepo(LocalRemote(), mirror=str(mirror), remote_url="unused")
+    for n in (1, 2):
+        Path(paths.workdir).mkdir(parents=True, exist_ok=True)
+        (Path(paths.workdir) / "stale.txt").write_text("left by the interrupted attempt")
+        (Path(paths.root) / "agent.log").write_text(f"old log {n}")
+        repo.prepare_workdir(paths, "ts", "t1", "attempt-1")
+        assert _git(paths.workdir, "rev-parse", "HEAD").strip() == base
+        assert not (Path(paths.workdir) / "stale.txt").exists()
+        assert not (Path(paths.root) / "agent.log").exists()
+        # the failed try's logs are kept beside it, closed to later agents
+        kept = Path(f"{paths.root}.try{n}")
+        assert (kept / "agent.log").read_text() == f"old log {n}"
+        assert kept.stat().st_mode & 0o777 == 0o700
+        (Path(paths.root) / "agent.log").write_text("")  # next round: a fresh leftover
+        (Path(paths.workdir) / "stale.txt").write_text("")
+    assert not Path(f"{paths.root}.try3").exists()
+
+
+def test_attempt_root_is_traverse_only(tmp_path):
+    # The agent user can reach its workdir and issue by path, but list nothing.
+    mirror, _, _ = _bench_mirror(tmp_path)
+    paths = _local_paths(tmp_path)
     BenchRepo(LocalRemote(), mirror=str(mirror), remote_url="unused").prepare_workdir(
         paths, "ts", "t1", "attempt-1")
-    assert _git(paths.workdir, "rev-parse", "HEAD").strip() == base
-    assert not (Path(paths.workdir) / "stale.txt").exists()
-    assert not (Path(paths.root) / "agent.log").exists()
+    assert Path(paths.root).stat().st_mode & 0o777 == 0o711
+    assert Path(paths.root).parent.stat().st_mode & 0o777 == 0o711

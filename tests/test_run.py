@@ -80,12 +80,14 @@ class FakeRuntime:
 
 
 class FakeAgent:
-    def __init__(self, *script):
+    def __init__(self, *script, events=None):
         self.script = list(script)  # AgentResult or Exception per call; then OK
         self.calls: list[str] = []
+        self.events = events if events is not None else []
 
     def run(self, remote, paths, endpoint, model, timeout_s):
         self.calls.append(paths.root)
+        self.events.append("agent")
         assert endpoint == "http://127.0.0.1:11500" and model == "m:latest" and timeout_s == 100
         step = self.script.pop(0) if self.script else OK
         if isinstance(step, Exception):
@@ -96,11 +98,13 @@ class FakeAgent:
 class FakeBench:
     mirror = "/m.git"
 
-    def __init__(self, push_ok=True):
+    def __init__(self, push_ok=True, events=None):
         self.push_ok = push_ok
         self.updates = 0
         self.prepared: list[tuple[str, str]] = []
+        self.exported: list[str] = []
         self.prepare_error: Exception | None = None
+        self.events = events if events is not None else []
 
     def update(self):
         self.updates += 1
@@ -115,7 +119,8 @@ class FakeBench:
         self.prepared.append((task, branch))
 
     def export_task_files(self, task_set, task, dest):
-        pass
+        self.events.append("export")
+        self.exported.append(dest)
 
     def commit_and_push(self, paths, branch, message):
         return self.push_ok
@@ -261,7 +266,8 @@ def test_bench_error_is_infra_not_fatal(tmp_path):
 def test_system_ollama_stopped_before_runtime_and_started_after(tmp_path):
     remote = BenchRemote()
     experiment(tmp_path, remote, FakeAgent())
-    assert remote.calls[0] == "sudo -n systemctl stop ollama"
+    i_stop = remote.calls.index("sudo -n systemctl stop ollama")
+    assert i_stop < next(i for i, c in enumerate(remote.calls) if "usage_proxy" in c)
     assert remote.calls[-1] == "sudo -n systemctl start ollama"
     assert remote.calls.count("sudo -n systemctl start ollama") == 1
 
@@ -447,3 +453,126 @@ def test_short_regression_run_fails_and_logs_are_fetched():
     assert rec.status == "fail" and not rec.regressions_ok
     assert any(p.endswith("/score/regression.log") for p in reads)
     assert any(p.endswith("/score/hidden.log") for p in reads)
+
+
+# ---------------------------------------------------------------- C1: hidden material, agent user
+
+ATT = f"{ROOT}/runs/e0-202610311200/001-health-clamp-r1"
+
+
+def test_task_files_exported_only_after_agent_into_score_dir():
+    events: list[str] = []
+    remote = BenchRemote()
+    bench = FakeBench(events=events)
+    rec = attempt(remote, agent=FakeAgent(events=events), bench=bench)
+    assert rec.status == "pass"
+    assert events == ["agent", "export"]
+    assert bench.exported == [f"{ATT}/score/task"]
+    calls = remote.calls
+    i_mkdir = calls.index(f"mkdir -p -m 700 {ATT}/score")
+    i_score = next(i for i, c in enumerate(calls) if "score.sh" in c)
+    assert i_mkdir < i_score
+    assert f" {ATT}/score/task " in calls[i_score]
+    i_rm = calls.index(f"rm -rf {ATT}/score/task {ATT}/score/project")
+    i_lock = calls.index(f"chmod 700 {ATT}")
+    assert i_score < i_rm and i_score < i_lock
+
+
+def test_cleanup_runs_when_scoring_fails():
+    remote = BenchRemote()
+    remote.replies.insert(0, ("score.sh", subprocess.CompletedProcess([], 3, "", "")))
+
+    def run(cmd, timeout=None, check=True):
+        r = FakeRemote.run(remote, cmd, timeout, check)
+        if check and r.returncode:
+            raise subprocess.CalledProcessError(r.returncode, cmd)
+        return r
+    remote.run = run
+    assert attempt(remote).status == "infra_error"
+    assert f"rm -rf {ATT}/score/task {ATT}/score/project" in remote.calls
+    assert f"chmod 700 {ATT}" in remote.calls
+
+
+def test_preflight_fails_on_agent_user_process():
+    remote = BenchRemote()
+    remote.replies.insert(0, ("pgrep -u agentrun", subprocess.CompletedProcess([], 0, "777\n", "")))
+    agent = FakeAgent()
+    rec = attempt(remote, agent=agent)
+    assert rec.status == "infra_error" and "777" in rec.error and agent.calls == []
+
+
+def test_kill_strays_kills_agent_user(tmp_path):
+    remote = StrayRemote()
+    experiment(tmp_path, remote, FakeAgent())
+    assert "sudo -n pkill -KILL -u agentrun" in remote.calls
+
+
+class SurvivorRemote(BenchRemote):
+    """An agent-user process shows up once the agent has run (it survived the kill)."""
+
+    def __init__(self):
+        super().__init__()
+        self.agent_ran = False
+
+    def run(self, cmd, timeout=None, check=True):
+        if cmd == "pgrep -u agentrun" and self.agent_ran:
+            self.calls.append(cmd)
+            return subprocess.CompletedProcess([], 0, "888\n", "")
+        return super().run(cmd, timeout, check)
+
+
+def test_agent_user_survivor_blocks_export():
+    remote = SurvivorRemote()
+    events: list[str] = []
+
+    class A(FakeAgent):
+        def run(self, *a):
+            remote.agent_ran = True
+            return super().run(*a)
+    bench = FakeBench(events=events)
+    rec = attempt(remote, agent=A(events=events), bench=bench)
+    assert rec.status == "infra_error" and "888" in rec.error
+    assert bench.exported == [] and not any("score.sh" in c for c in remote.calls)
+
+
+# ---------------------------------------------------------------- I1: OOM is infra, not the model
+
+OOM_LINE = ("Oct 31 12:00:01 geekoma9 kernel: Out of memory: Killed process 4242 (ollama) "
+            "total-vm:1234kB, anon-rss:999kB\n")
+
+
+def test_kernel_oom_during_agent_is_infra_error():
+    remote = BenchRemote()
+    remote.replies.insert(0, ("journalctl -k", subprocess.CompletedProcess([], 0, OOM_LINE, "")))
+    rec = attempt(remote, agent=FakeAgent(AgentResult(137, False, 50.0)))
+    assert rec.status == "infra_error" and "OOM" in rec.error and "ollama" in rec.error
+    assert "agent" in rec.error
+    assert not any("score.sh" in c for c in remote.calls)
+    j = next(c for c in remote.calls if "journalctl -k" in c)
+    assert "sudo -n journalctl -k --since @1800000000 --no-pager" in j
+    assert "journalctl --user -u agentbench-runtime --since @1800000000 --no-pager" in j
+    assert "out of memory|oom-kill|killed process" in j
+
+
+def test_oom_during_scoring_is_infra_error():
+    class LateOom(BenchRemote):
+        scored = False
+
+        def run(self, cmd, timeout=None, check=True):
+            if "score.sh" in cmd:
+                self.scored = True
+            if "journalctl -k" in cmd and self.scored:
+                self.calls.append(cmd)
+                return subprocess.CompletedProcess(
+                    [], 0, "kernel: oom-kill:constraint=CONSTRAINT_NONE,task=godot,pid=99\n", "")
+            return super().run(cmd, timeout, check)
+    rec = attempt(LateOom())
+    assert rec.status == "infra_error" and "scoring" in rec.error and "godot" in rec.error
+
+
+def test_old_attempts_closed_at_run_start(tmp_path):
+    remote = BenchRemote()
+    experiment(tmp_path, remote, FakeAgent())
+    sweep = next(c for c in remote.calls if "find " in c and "/runs" in c)
+    assert "-mindepth 2 -maxdepth 2 -type d -perm /077 -exec chmod 700" in sweep
+    assert remote.calls.index(sweep) < next(i for i, c in enumerate(remote.calls) if "usage_proxy" in c)

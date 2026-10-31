@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shlex
 
-from harness.paths import ROOT, AttemptPaths
+from harness.paths import MIRROR, AttemptPaths
 from harness.remote import Remote
 
 GIT_IDENT = ["-c", "user.name=agentbench", "-c", "user.email=agentbench@localhost"]
@@ -11,7 +11,7 @@ GIT_IDENT = ["-c", "user.name=agentbench", "-c", "user.email=agentbench@localhos
 class BenchRepo:
     """Access to the benchmark repo through a bare mirror on the remote host."""
 
-    def __init__(self, remote: Remote, mirror: str = f"{ROOT}/bench.git",
+    def __init__(self, remote: Remote, mirror: str = MIRROR,
                  remote_url: str = "git@github-agentbench:YodaTheCoder/godot-agent-bench.git"):
         self.remote = remote
         self.mirror = mirror
@@ -43,10 +43,16 @@ class BenchRepo:
         sha = self.base_sha(task_set)
         issue = self.issue_text(task_set, task)
         wd = shlex.quote(paths.workdir)
+        root, run_dir = shlex.quote(paths.root), shlex.quote(paths.root.rsplit("/", 1)[0])
+        # A failed or interrupted try leaves its folder behind; resuming must start clean, but
+        # its logs are evidence: move it to <root>.try<N> (first free N), closed (0700).
+        # The new root is 0711 (and its run folder too): the agent user reaches its workdir
+        # and issue by path but can list nothing; run_attempt closes it after scoring.
         # --no-local: a plain local clone copies all of objects/, leaking the tests branch.
-        # rm -rf first: an interrupted attempt leaves its folder behind, and resuming must start clean.
         self.remote.run(
-            f"rm -rf {shlex.quote(paths.root)} && mkdir -p {shlex.quote(paths.root)} && "
+            f"if [ -e {root} ]; then n=1; while [ -e {root}.try$n ]; do n=$((n+1)); done; "
+            f"mv {root} {root}.try$n && chmod 700 {root}.try$n; fi && "
+            f"mkdir -p {root} && chmod 711 {run_dir} {root} && "
             f"git clone --no-local --single-branch --branch main --no-tags "
             f"{shlex.quote(self.mirror)} {wd}")
         self.remote.run(f"git -C {wd} checkout -b {shlex.quote(branch)} {shlex.quote(sha)}")
