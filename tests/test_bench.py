@@ -71,7 +71,8 @@ def _git(cwd, *a):
                           capture_output=True, text=True, check=True).stdout
 
 
-def test_workdir_does_not_contain_hidden_objects(tmp_path):
+def _bench_mirror(tmp_path):
+    """A mirror with main, base-ts, taskset-ts and a tests branch holding a secret; returns (mirror, base, secret)."""
     src = tmp_path / "src"
     subprocess.run(["git", "init", "-q", "-b", "main", str(src)], check=True)
     (src / "a.txt").write_text("public")
@@ -88,10 +89,18 @@ def test_workdir_does_not_contain_hidden_objects(tmp_path):
     mirror = tmp_path / "bench.git"
     subprocess.run(["git", "clone", "-q", "--mirror", str(src), str(mirror)], check=True)
     base = _git(src, "rev-parse", "base-ts^{commit}").strip()
+    return mirror, base, secret
 
+
+def _local_paths(tmp_path):
     paths = attempt_paths("r", "t1", 1)
-    paths = dataclasses.replace(paths, root=str(tmp_path / "att"), workdir=str(tmp_path / "att/work"),
-                                issue_file=str(tmp_path / "att/issue.md"))
+    return dataclasses.replace(paths, root=str(tmp_path / "att"), workdir=str(tmp_path / "att/work"),
+                               issue_file=str(tmp_path / "att/issue.md"))
+
+
+def test_workdir_does_not_contain_hidden_objects(tmp_path):
+    mirror, base, secret = _bench_mirror(tmp_path)
+    paths = _local_paths(tmp_path)
     BenchRepo(LocalRemote(), mirror=str(mirror), remote_url="unused").prepare_workdir(
         paths, "ts", "t1", "attempt-1")
     wd = paths.workdir
@@ -101,3 +110,17 @@ def test_workdir_does_not_contain_hidden_objects(tmp_path):
     objs = _git(wd, "cat-file", "--batch-all-objects", "--batch-check")
     assert secret not in objs
     assert "dangling commit" not in _git(wd, "fsck", "--lost-found", "--no-reflogs")
+
+
+def test_prepare_workdir_replaces_leftover_attempt(tmp_path):
+    # Resuming after an interrupted attempt finds its folder still there; git refuses to clone into it.
+    mirror, base, _ = _bench_mirror(tmp_path)
+    paths = _local_paths(tmp_path)
+    Path(paths.workdir).mkdir(parents=True)
+    (Path(paths.workdir) / "stale.txt").write_text("left by the interrupted attempt")
+    (Path(paths.root) / "agent.log").write_text("old log")
+    BenchRepo(LocalRemote(), mirror=str(mirror), remote_url="unused").prepare_workdir(
+        paths, "ts", "t1", "attempt-1")
+    assert _git(paths.workdir, "rev-parse", "HEAD").strip() == base
+    assert not (Path(paths.workdir) / "stale.txt").exists()
+    assert not (Path(paths.root) / "agent.log").exists()

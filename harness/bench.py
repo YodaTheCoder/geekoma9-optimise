@@ -44,8 +44,9 @@ class BenchRepo:
         issue = self.issue_text(task_set, task)
         wd = shlex.quote(paths.workdir)
         # --no-local: a plain local clone copies all of objects/, leaking the tests branch.
+        # rm -rf first: an interrupted attempt leaves its folder behind, and resuming must start clean.
         self.remote.run(
-            f"mkdir -p {shlex.quote(paths.root)} && "
+            f"rm -rf {shlex.quote(paths.root)} && mkdir -p {shlex.quote(paths.root)} && "
             f"git clone --no-local --single-branch --branch main --no-tags "
             f"{shlex.quote(self.mirror)} {wd}")
         self.remote.run(f"git -C {wd} checkout -b {shlex.quote(branch)} {shlex.quote(sha)}")
