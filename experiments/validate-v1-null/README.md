@@ -4,6 +4,7 @@
 | attempts | 12 |
 | passes | 0 |
 | infra_errors | 0 |
+| unscored | 0 |
 | pass_rate | 0.000 |
 | wall_hours | 0.000 |
 | solved_per_8h | 0.000 |

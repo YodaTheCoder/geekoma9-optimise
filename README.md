@@ -11,13 +11,17 @@ same network with `uv`, ssh key access to it and, for reviews, a logged-in `clau
 rollbacks, is in `docs/provisioning.md`.
 
 1. `uv sync`
-2. `uv run harness provision` checks the test machine (Godot, Ollama, deploy key, model store, sudo).
+2. `uv run harness provision` checks the test machine (Godot, Ollama, deploy key, model store, sudo, and the
+   unprivileged `agentrun` user that command agents run as).
 3. `uv run harness validate --task-set v1` runs the oracle and null agents on every task (all must pass and fail
    respectively).
 4. `uv run harness run experiments/<id>/config.yaml` runs an experiment; rerunning resumes it. Run it in `tmux`
    on an always-on machine: attempts take minutes each and the orchestrator must stay connected.
 5. `uv run harness report experiments/<id>` writes the results table into the experiment's README;
-   `uv run harness review experiments/<id>` adds the frontier review.
+   `uv run harness review experiments/<id>` adds the frontier review. `unscored` in the table counts plan
+   entries still owed a result (rerun the config to resume them).
+
+Known limit: Only the wall-clock budget (45 min) is enforced; there is no token or step budget yet.
 
 Results: `docs/FINDINGS.md`. Each attempt's output is the branch named in its record, in
 `YodaTheCoder/godot-agent-bench`.

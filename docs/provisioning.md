@@ -131,7 +131,15 @@ in the config to work (or install Claude Code for agentrun and change the path).
 ## Recovery if the orchestrator is hard-killed
 
 The harness stops the owner's Ollama for a run and restores it in a `finally`. If the orchestrator
-is killed (SIGKILL, power loss) mid-run, restore it by hand: `sudo systemctl start ollama`.
+is killed (SIGKILL, power loss) mid-run, restore it by hand: `sudo systemctl start ollama`
+(only if it was running before; the harness itself restarts it only when `systemctl is-active ollama`
+said `active` at run start). SIGTERM and SIGHUP (closing the tmux pane) do run the cleanup.
+
+A run holds `flock -n ~/agentbench/run.lock` on geekoma9 through a detached helper
+(`flock ... sleep infinity`) for its whole length, so a second `harness run` fails at once. After a
+hard kill that helper is left holding the lock: `pkill -f 'agentbench/run.lock'` releases it.
+Every run also syncs `harness/remote_scripts/` to `~/agentbench/bin/` at start, so records always
+name (in `versions.remote_scripts`) the scripts that scored them.
 If the automatic restore fails after 3 tries the harness prints
 `system Ollama NOT restarted ... run: sudo systemctl start ollama` to stderr.
 
