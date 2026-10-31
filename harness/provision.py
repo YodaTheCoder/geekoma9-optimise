@@ -98,7 +98,8 @@ def check_agent_user(remote: Remote) -> Check:
         return Check(name, False, out or f"no user {AGENT_USER}")
     _, out = _sh(remote, f"sudo -n -l -U {u}")
     if "is not allowed to run sudo" not in out:
-        return Check(name, False, f"{AGENT_USER} may have sudo rights: {out.splitlines()[0] if out else '?'}")
+        first = out.splitlines()[0] if out else "?"
+        return Check(name, False, f"{AGENT_USER} may have sudo rights: {first}")
     ok, out = _sh(remote, f"sudo -n -u {u} true")
     if not ok:
         return Check(name, False, f"cannot run commands as {AGENT_USER}: {out}")

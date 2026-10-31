@@ -508,6 +508,12 @@ def test_cleanup_runs_when_scoring_fails():
     assert f"chmod 700 {ATT}" in remote.calls
 
 
+def test_attempt_closed_when_agent_fails():
+    remote = BenchRemote()
+    rec = attempt(remote, agent=FakeAgent(RemoteError("ssh dropped")))
+    assert rec.status == "infra_error" and f"chmod 700 {ATT}" in remote.calls
+
+
 def test_preflight_fails_on_agent_user_process():
     remote = BenchRemote()
     remote.replies.insert(0, ("pgrep -u agentrun", subprocess.CompletedProcess([], 0, "777\n", "")))

@@ -97,7 +97,8 @@ def _acquire_run_lock(remote: Remote) -> int:
     r = remote.run(
         f"out=$(mktemp); setsid nohup flock -n {lock} bash -c 'echo locked; exec sleep infinity' "
         f'> "$out" 2>&1 < /dev/null & pid=$!; '
-        f'for i in $(seq 50); do if grep -q locked "$out"; then rm -f "$out"; echo $pid; exit 0; fi; '
+        f'for i in $(seq 50); do '
+        f'if grep -q locked "$out"; then rm -f "$out"; echo $pid; exit 0; fi; '
         f'if ! kill -0 $pid 2>/dev/null; then rm -f "$out"; exit 75; fi; sleep 0.1; done; exit 1',
         check=False)
     if r.returncode == 75:
@@ -308,57 +309,58 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
         preflight(remote, runtime)
         versions = {**runtime.versions(remote), **versions}
         bench.prepare_workdir(paths, cfg.task_set, task, branch)
-
-        scripts = shlex.quote(scripts_dir)
-        pids: list[int] = []
         try:
-            pids.append(_start_helper(
-                remote, f"python3 {scripts}/usage_proxy.py --listen {PROXY_LISTEN} "
-                        f"--upstream {shlex.quote(runtime.upstream)} "
-                        f"--log {shlex.quote(paths.usage_log)}",
-                f"{paths.root}/usage_proxy.log"))
-            pids.append(_start_helper(
-                remote, f"bash {scripts}/sample.sh {shlex.quote(paths.samples_csv)} "
-                        f"{SAMPLE_INTERVAL_S}",
-                f"{paths.root}/sample.log"))
-            # TCP connect only: an HTTP probe would add a row to usage.jsonl.
-            host, port = PROXY_LISTEN.split(":")
-            probe = shlex.quote(f"</dev/tcp/{host}/{port}")
-            ready = remote.run(f"for i in $(seq 50); do bash -c {probe} 2>/dev/null "
-                               f"&& exit 0; sleep 0.1; done; exit 1", check=False)
-            if ready.returncode != 0:
-                raise InfraError("usage proxy did not start listening")
-            result = agent.run(remote, paths, ENDPOINT, runtime.model, cfg.timeout_s)
-        finally:
-            if pids:
-                clock.sleep(PROXY_FLUSH_S)
-            for pid in pids:
-                _stop_helper(remote, pid)
+            scripts = shlex.quote(scripts_dir)
+            pids: list[int] = []
+            try:
+                pids.append(_start_helper(
+                    remote, f"python3 {scripts}/usage_proxy.py --listen {PROXY_LISTEN} "
+                            f"--upstream {shlex.quote(runtime.upstream)} "
+                            f"--log {shlex.quote(paths.usage_log)}",
+                    f"{paths.root}/usage_proxy.log"))
+                pids.append(_start_helper(
+                    remote, f"bash {scripts}/sample.sh {shlex.quote(paths.samples_csv)} "
+                            f"{SAMPLE_INTERVAL_S}",
+                    f"{paths.root}/sample.log"))
+                # TCP connect only: an HTTP probe would add a row to usage.jsonl.
+                host, port = PROXY_LISTEN.split(":")
+                probe = shlex.quote(f"</dev/tcp/{host}/{port}")
+                ready = remote.run(f"for i in $(seq 50); do bash -c {probe} 2>/dev/null "
+                                   f"&& exit 0; sleep 0.1; done; exit 1", check=False)
+                if ready.returncode != 0:
+                    raise InfraError("usage proxy did not start listening")
+                result = agent.run(remote, paths, ENDPOINT, runtime.model, cfg.timeout_s)
+            finally:
+                if pids:
+                    clock.sleep(PROXY_FLUSH_S)
+                for pid in pids:
+                    _stop_helper(remote, pid)
 
-        _check_oom(remote, since, "agent run")
-        pushed = bench.commit_and_push(paths, branch, f"{run_id} {task} r{repeat}")
-        # Hidden tests, solution and scorer appear only now, in a 0700 folder the agent never
-        # saw, and only once nothing runs as the agent user.
-        survivors = _agent_procs(remote)
-        if survivors:
-            raise InfraError(f"{AGENT_USER} processes survived the agent: {' '.join(survivors)}")
-        try:
-            remote.run(f"mkdir -p -m 700 {shlex.quote(paths.score_dir)}")
-            bench.export_task_files(cfg.task_set, task, paths.task_files)
-            remote.run(" ".join(shlex.quote(a) for a in (
-                "bash", f"{scripts_dir}/score.sh", paths.workdir, paths.task_files,
-                bench.base_sha(cfg.task_set), bench.mirror, paths.score_dir, GODOT_BIN)),
-                timeout=SCORE_TIMEOUT_S)
-            with tempfile.TemporaryDirectory() as tmp:
-                parse_ok, hidden, regression, regression_expected = _fetch_score(
-                    remote, paths, Path(tmp))
+            _check_oom(remote, since, "agent run")
+            pushed = bench.commit_and_push(paths, branch, f"{run_id} {task} r{repeat}")
+            # Hidden tests, solution and scorer appear only now, in a 0700 folder the agent never
+            # saw, and only once nothing runs as the agent user.
+            survivors = _agent_procs(remote)
+            if survivors:
+                raise InfraError(
+                    f"{AGENT_USER} processes survived the agent: {' '.join(survivors)}")
+            try:
+                remote.run(f"mkdir -p -m 700 {shlex.quote(paths.score_dir)}")
+                bench.export_task_files(cfg.task_set, task, paths.task_files)
+                remote.run(" ".join(shlex.quote(a) for a in (
+                    "bash", f"{scripts_dir}/score.sh", paths.workdir, paths.task_files,
+                    bench.base_sha(cfg.task_set), bench.mirror, paths.score_dir, GODOT_BIN)),
+                    timeout=SCORE_TIMEOUT_S)
+                with tempfile.TemporaryDirectory() as tmp:
+                    parse_ok, hidden, regression, regression_expected = _fetch_score(
+                        remote, paths, Path(tmp))
+            finally:
+                # Keep logs, XML and score.json; drop the hidden material and the scored copy.
+                _quiet(remote, f"rm -rf {shlex.quote(paths.task_files)} "
+                               f"{shlex.quote(paths.score_dir + '/project')}")
+            _check_oom(remote, since, "scoring")
         finally:
-            # Keep logs, XML and score.json; drop the hidden material and the scored copy,
-            # and close the attempt to later agents.
-            _quiet(remote, f"rm -rf {shlex.quote(paths.task_files)} "
-                           f"{shlex.quote(paths.score_dir + '/project')}")
-            _quiet(remote, f"chmod 700 {shlex.quote(paths.root)}")
-        _check_oom(remote, since, "scoring")
+            _quiet(remote, f"chmod 700 {shlex.quote(paths.root)}")  # closed to later agents
         usage = summarize_usage(_read_optional(remote, paths.usage_log))
         samples = summarize_samples(_read_optional(remote, paths.samples_csv))
     except (InfraError, *INFRA_EXCEPTIONS) as e:
