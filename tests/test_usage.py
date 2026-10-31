@@ -254,6 +254,8 @@ def test_proxy_streams_incrementally(tmp_path):
 
 @pytest.mark.live
 def test_upstream_dies_mid_stream_is_upstream_error(tmp_path):
+    got_first = threading.Event()
+
     class Dies(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -269,6 +271,7 @@ def test_upstream_dies_mid_stream_is_upstream_error(tmp_path):
             b = b'data: {"choices":[]}\n\n'
             self.wfile.write(b"%x\r\n%s\r\n" % (len(b), b))
             self.wfile.flush()
+            got_first.wait(10)  # the client has the first chunk, so ttft is recorded
             # hard reset (RST) without terminating the chunked body
             self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
                                        b"\x01\x00\x00\x00\x00\x00\x00\x00")
@@ -281,6 +284,8 @@ def test_upstream_dies_mid_stream_is_upstream_error(tmp_path):
         c = http.client.HTTPConnection("127.0.0.1", proxy.server_address[1], timeout=10)
         c.request("POST", "/x", body=b"{}")
         r = c.getresponse()
+        assert b"choices" in r.read1(4096)
+        got_first.set()
         try:
             r.read()
         except http.client.IncompleteRead:
@@ -364,7 +369,7 @@ def test_keepalive_and_chunked_request_body(tmp_path):
         _stop(proxy, upstream)
 
 
-def test_capture_keeps_tail_and_extraction_failure_still_logs(monkeypatch, tmp_path):
+def test_extraction_failure_still_logs_row(monkeypatch, tmp_path):
     monkeypatch.setattr(usage_proxy, "extract_usage",
                         lambda *a: (_ for _ in ()).throw(RecursionError()))
     log = tmp_path / "usage.jsonl"
@@ -376,5 +381,38 @@ def test_capture_keeps_tail_and_extraction_failure_still_logs(monkeypatch, tmp_p
         c.close()
         row = _rows(log, 1)[0]
         assert row["status"] == 200 and row["prompt_tokens"] is None
+    finally:
+        _stop(proxy, upstream)
+
+
+@pytest.mark.live
+def test_capture_trim_keeps_tail_usage(monkeypatch, tmp_path):
+    monkeypatch.setattr(usage_proxy, "MAX_CAPTURE", 300)
+    pad = b'{"message":{"content":"' + b"x" * 100 + b'"},"done":false}\n'
+    body = pad * 50 + b'{"done":true,"prompt_eval_count":77,"eval_count":88}\n'
+    assert len(body) > 300 * 10
+
+    class Big(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    log = tmp_path / "usage.jsonl"
+    upstream, proxy = _start(Big, log)
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", proxy.server_address[1], timeout=10)
+        c.request("POST", "/x", body=b"{}")
+        assert c.getresponse().read() == body  # client still gets the full body
+        c.close()
+        row = _rows(log, 1)[0]
+        assert (row["prompt_tokens"], row["gen_tokens"]) == (77, 88)
     finally:
         _stop(proxy, upstream)
