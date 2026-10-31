@@ -12,7 +12,11 @@ from harness.config import AgentConfig, ExperimentConfig, RuntimeConfig
 from harness.paths import ROOT
 from harness.remote import RemoteError
 from harness.results import append_record, read_records
-from harness.run import HostDirtyError, InfraError, preflight, run_attempt, run_experiment
+from harness.config import ConfigError
+from harness.provision import SCRIPTS_SRC
+from harness.run import (HostDirtyError, InfraError, RunLockedError, RuntimeRestartError,
+                         config_hash, harness_version, preflight, run_attempt, run_experiment,
+                         scripts_hash)
 from harness.tiers import TASK_SETS
 
 SCREENING = TASK_SETS["v1"]["screening"]
@@ -24,7 +28,7 @@ CFG = ExperimentConfig(
     id="e0", task_set="v1", tier="screening",
     runtime=RuntimeConfig(kind="ollama", model="m:latest", context=8192),
     agent=AgentConfig(kind="command", name="aider", command="x", version="0.9"),
-    timeout_s=100, cooldown_s=7, sampling={"temperature": 0.2})
+    timeout_s=100, cooldown_s=7)
 
 
 class BenchRemote(FakeRemote):
@@ -36,6 +40,8 @@ class BenchRemote(FakeRemote):
         self.usage = usage
         self.reply("usage_proxy.py", stdout="111\n")
         self.reply("sample.sh", stdout="222\n")
+        self.reply("run.lock", stdout="333\n")
+        self.reply("systemctl is-active ollama", stdout="active\n")
 
     def read_text(self, path):
         d = path.rsplit("/", 1)[0]
@@ -90,7 +96,7 @@ class FakeAgent:
         self.events.append("agent")
         assert endpoint == "http://127.0.0.1:11500" and model == "m:latest" and timeout_s == 100
         step = self.script.pop(0) if self.script else OK
-        if isinstance(step, Exception):
+        if isinstance(step, BaseException):
             raise step
         return step
 
@@ -165,7 +171,7 @@ def test_pass_record_fields():
     assert rec.peak_mem_mib == 1000 and rec.peak_gpu_mem_mib == 500 and not rec.throttled
     assert rec.versions == {"runtime": "ollama 0.34.4", "model_digest": "sha256:d",
                             "agent": "aider 0.9", "harness": "deadbee", "task_set": "v1",
-                            "sampling": '{"temperature": 0.2}'}
+                            "sampling": "{}", "config": config_hash(CFG)}
     assert rec.started_at == "2027-01-15T08:00:00Z"
     # helpers started detached, stopped by process group, score.sh run with the godot binary
     proxy = next(c for c in remote.calls if "usage_proxy.py" in c)
@@ -247,12 +253,19 @@ def test_retry_after_infra_can_pass(tmp_path):
     assert len(recs) == len(SCREENING) + 1
 
 
-def test_failed_restart_recorded_and_loop_continues(tmp_path):
+def test_failed_restart_stops_the_run_without_recording_the_retry(tmp_path):
+    # e.g. ssh down for minutes: recording the untried retry would mark the entry done
     rt = FakeRuntime()
     rt.start_error = RemoteError("ollama dead")
-    recs, _, _ = experiment(tmp_path, BenchRemote(), FakeAgent(RemoteError("drop")), runtime=rt)
-    assert [r.status for r in recs[:2]] == ["infra_error", "infra_error"]
-    assert "ollama dead" in recs[1].error
+    remote = BenchRemote()
+    with pytest.raises(RuntimeRestartError, match="ollama dead"):
+        experiment(tmp_path, remote, FakeAgent(RemoteError("drop")), runtime=rt)
+    recs = read_records(tmp_path / "results.jsonl")
+    assert [(r.task, r.status) for r in recs] == [(SCREENING[0], "infra_error")]
+    assert remote.calls[-2] == "sudo -n systemctl start ollama"  # restored, then lock released
+    # a resume reruns the untried retry, on its own branch
+    recs, _, _ = experiment(tmp_path, BenchRemote(), FakeAgent())
+    assert [r.status for r in recs if r.task == SCREENING[0]] == ["infra_error", "pass"]
     assert len(recs) == len(SCREENING) + 1
 
 
@@ -266,9 +279,10 @@ def test_bench_error_is_infra_not_fatal(tmp_path):
 def test_system_ollama_stopped_before_runtime_and_started_after(tmp_path):
     remote = BenchRemote()
     experiment(tmp_path, remote, FakeAgent())
+    i_active = remote.calls.index("systemctl is-active ollama")
     i_stop = remote.calls.index("sudo -n systemctl stop ollama")
-    assert i_stop < next(i for i, c in enumerate(remote.calls) if "usage_proxy" in c)
-    assert remote.calls[-1] == "sudo -n systemctl start ollama"
+    assert i_active < i_stop < next(i for i, c in enumerate(remote.calls) if "usage_proxy" in c)
+    assert remote.calls[-2] == "sudo -n systemctl start ollama"
     assert remote.calls.count("sudo -n systemctl start ollama") == 1
 
 
@@ -276,14 +290,14 @@ def test_system_ollama_restored_on_error(tmp_path):
     remote = BenchRemote()
     with pytest.raises(ValueError):
         experiment(tmp_path, remote, FakeAgent(ValueError("agent bug")))
-    assert remote.calls[-1] == "sudo -n systemctl start ollama"
+    assert remote.calls[-2] == "sudo -n systemctl start ollama"
 
 
 def test_system_ollama_restored_on_host_dirty(tmp_path):
     remote = StrayRemote(persistent=True)
     with pytest.raises(HostDirtyError):
         experiment(tmp_path, remote, FakeAgent())
-    assert remote.calls[-1] == "sudo -n systemctl start ollama"
+    assert remote.calls[-2] == "sudo -n systemctl start ollama"
 
 
 def test_system_ollama_restored_when_runtime_start_fails(tmp_path):
@@ -293,7 +307,7 @@ def test_system_ollama_restored_when_runtime_start_fails(tmp_path):
     remote = BenchRemote()
     with pytest.raises(RemoteError):
         experiment(tmp_path, remote, FakeAgent(), runtime=Boom())
-    assert remote.calls[-1] == "sudo -n systemctl start ollama"
+    assert remote.calls[-2] == "sudo -n systemctl start ollama"
 
 
 class StartFlaky(BenchRemote):
@@ -345,7 +359,7 @@ def test_runtime_stop_failure_does_not_mask_original_error(tmp_path, capsys):
     with pytest.raises(ValueError, match="agent bug"):
         experiment(tmp_path, remote, FakeAgent(ValueError("agent bug")), runtime=BadStop())
     assert "runtime stop failed" in capsys.readouterr().err
-    assert remote.calls[-1] == "sudo -n systemctl start ollama"
+    assert remote.calls[-2] == "sudo -n systemctl start ollama"
 
 
 def test_resume_skips_done(tmp_path):
@@ -365,7 +379,8 @@ def test_run_id_created_and_persisted(tmp_path):
     clock = FakeClock()
     recs, _, _ = experiment(tmp_path, BenchRemote(), FakeAgent(), clock=clock)
     run_id = (tmp_path / "run_id").read_text().strip()
-    assert run_id.startswith("e0-") and len(run_id) == len("e0-YYYYmmddHHMM")
+    # seconds: a validate rerun within the same minute must not reuse branch names
+    assert run_id.startswith("e0-") and len(run_id) == len("e0-YYYYmmddHHMMSS")
     assert all(r.run_id == run_id and r.experiment == "e0" for r in recs)
 
 
@@ -426,7 +441,7 @@ def test_preflight_infra_record_still_pins_versions():
     remote.replies.insert(0, ("pgrep", subprocess.CompletedProcess([], 0, "4242\n", "")))
     rec = attempt(remote)
     assert rec.versions == {"agent": "aider 0.9", "harness": "deadbee", "task_set": "v1",
-                            "sampling": '{"temperature": 0.2}'}
+                            "sampling": "{}", "config": config_hash(CFG)}
 
 
 def test_proxy_probe_is_tcp_only():
@@ -576,3 +591,153 @@ def test_old_attempts_closed_at_run_start(tmp_path):
     sweep = next(c for c in remote.calls if "find " in c and "/runs" in c)
     assert "-mindepth 2 -maxdepth 2 -type d -perm /077 -exec chmod 700" in sweep
     assert remote.calls.index(sweep) < next(i for i, c in enumerate(remote.calls) if "usage_proxy" in c)
+
+
+# ---------------------------------------------------------------- I3: a branch per try
+
+def test_retry_gets_its_own_branch(tmp_path):
+    bench = FakeBench()
+    recs, _, _ = experiment(tmp_path, BenchRemote(), FakeAgent(RemoteError("drop")), bench=bench)
+    base = (tmp_path / "run_id").read_text().strip()
+    first = f"exp/{base}/{SCREENING[0]}-r1"
+    assert [(r.status, r.branch) for r in recs[:2]] == [("infra_error", first),
+                                                        ("pass", first + "-t2")]
+    assert [b for _, b in bench.prepared[:2]] == [first, first + "-t2"]
+    assert recs[2].branch == f"exp/{base}/{SCREENING[1]}-r1"
+
+
+def test_resumed_retry_uses_second_try_branch(tmp_path):
+    (tmp_path / "run_id").write_text("e0-20260101000000\n")
+    seed = attempt(BenchRemote())
+    append_record(tmp_path / "results.jsonl",
+                  replace(seed, task=SCREENING[0], run_id="e0-20260101000000", status="infra_error"))
+    bench = FakeBench()
+    experiment(tmp_path, BenchRemote(), FakeAgent(), bench=bench)
+    assert bench.prepared[0] == (SCREENING[0], f"exp/e0-20260101000000/{SCREENING[0]}-r1-t2")
+
+
+# ---------------------------------------------------------------- I7 / M2: provenance
+
+def test_scripts_synced_and_hashes_recorded(tmp_path):
+    remote = BenchRemote()
+    recs, _, _ = experiment(tmp_path, remote, FakeAgent())
+    assert remote.synced == [(str(SCRIPTS_SRC), f"{ROOT}/bin")]
+    sync = remote.calls.index(f"<sync {SCRIPTS_SRC} -> {ROOT}/bin>")
+    assert sync < next(i for i, c in enumerate(remote.calls) if "usage_proxy" in c)
+    assert all(r.versions["remote_scripts"] == scripts_hash(SCRIPTS_SRC) for r in recs)
+    assert all(r.versions["config"] == config_hash(CFG) for r in recs)
+
+
+def test_scripts_hash_covers_contents(tmp_path):
+    (tmp_path / "a.sh").write_text("one")
+    h1 = scripts_hash(tmp_path)
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "x.pyc").write_text("junk")
+    assert scripts_hash(tmp_path) == h1
+    (tmp_path / "a.sh").write_text("two")
+    assert scripts_hash(tmp_path) != h1
+
+
+def test_config_hash_tracks_every_field():
+    assert config_hash(CFG) == config_hash(replace(CFG))
+    assert config_hash(CFG) != config_hash(replace(CFG, runtime=replace(CFG.runtime, context=4096)))
+    assert config_hash(CFG) != config_hash(replace(CFG, agent=replace(CFG.agent, env={"A": "1"})))
+
+
+def test_resume_refuses_changed_config(tmp_path):
+    (tmp_path / "run_id").write_text("e0-20260101000000\n")
+    seed = attempt(BenchRemote())
+    append_record(tmp_path / "results.jsonl",
+                  replace(seed, versions={**seed.versions, "config": "0" * 64}))
+    remote = BenchRemote()
+    with pytest.raises(ConfigError) as e:
+        experiment(tmp_path, remote, FakeAgent())
+    assert "0" * 64 in str(e.value) and config_hash(CFG) in str(e.value)
+    assert remote.calls == []  # refused before touching the host
+
+
+def test_resume_accepts_records_without_config_hash(tmp_path):
+    (tmp_path / "run_id").write_text("e0-20260101000000\n")
+    seed = attempt(BenchRemote())
+    old = {k: v for k, v in seed.versions.items() if k != "config"}
+    append_record(tmp_path / "results.jsonl", replace(seed, task=SCREENING[0], versions=old))
+    recs, _, _ = experiment(tmp_path, BenchRemote(), FakeAgent())
+    assert len(recs) == len(SCREENING)
+
+
+def test_harness_version_marks_dirty_tree(monkeypatch):
+    import harness.run as run_mod
+
+    def fake(status):
+        def run(args, **kw):
+            out = "abc1234\n" if "rev-parse" in args else status
+            return subprocess.CompletedProcess(args, 0, out, "")
+        return run
+    monkeypatch.setattr(run_mod.subprocess, "run", fake(""))
+    assert harness_version() == "abc1234"
+    monkeypatch.setattr(run_mod.subprocess, "run", fake(" M harness/run.py\n"))
+    assert harness_version() == "abc1234-dirty"
+
+
+# ---------------------------------------------------------------- M4: owner's Ollama, signals
+
+def test_inactive_system_ollama_is_left_stopped(tmp_path):
+    remote = BenchRemote()
+    remote.replies.insert(0, ("systemctl is-active ollama",
+                              subprocess.CompletedProcess([], 3, "inactive\n", "")))
+    experiment(tmp_path, remote, FakeAgent())
+    assert "sudo -n systemctl start ollama" not in remote.calls
+
+
+@pytest.mark.parametrize("signum", ["SIGTERM", "SIGHUP"])
+def test_signal_runs_cleanup(tmp_path, signum):
+    import os
+    import signal
+    sig = getattr(signal, signum)
+    before = signal.getsignal(sig)
+
+    class Killed(FakeAgent):
+        def run(self, *a):
+            os.kill(os.getpid(), sig)
+            return super().run(*a)
+    remote = BenchRemote()
+    with pytest.raises(KeyboardInterrupt):
+        experiment(tmp_path, remote, Killed())
+    assert remote.calls[-2] == "sudo -n systemctl start ollama"
+    assert "kill -TERM -- -111" in remote.calls  # helpers stopped too
+    assert signal.getsignal(sig) == before
+
+
+def test_keyboard_interrupt_restores_ollama(tmp_path):
+    remote = BenchRemote()
+    with pytest.raises(KeyboardInterrupt):
+        experiment(tmp_path, remote, FakeAgent(KeyboardInterrupt()))
+    assert remote.calls[-2] == "sudo -n systemctl start ollama"
+
+
+# ---------------------------------------------------------------- M5: run_id
+
+@pytest.mark.parametrize("bad", ["../e0", "e0/x", "E0-1", "e0..1"])
+def test_bad_run_id_file_rejected(tmp_path, bad):
+    (tmp_path / "run_id").write_text(bad + "\n")
+    with pytest.raises(ConfigError, match="run_id"):
+        experiment(tmp_path, BenchRemote(), FakeAgent())
+
+
+# ---------------------------------------------------------------- M9: one run at a time
+
+def test_run_lock_held_for_whole_run(tmp_path):
+    remote = BenchRemote()
+    experiment(tmp_path, remote, FakeAgent())
+    lock = next(i for i, c in enumerate(remote.calls) if "run.lock" in c)
+    assert f"flock -n {ROOT}/run.lock" in remote.calls[lock]
+    assert lock < remote.calls.index("sudo -n systemctl stop ollama")
+    assert remote.calls[-1] == "kill -TERM -- -333"
+
+
+def test_second_run_fails_fast(tmp_path):
+    remote = BenchRemote()
+    remote.replies.insert(0, ("run.lock", subprocess.CompletedProcess([], 75, "", "")))
+    with pytest.raises(RunLockedError, match="another harness run"):
+        experiment(tmp_path, remote, FakeAgent())
+    assert not any("ollama" in c for c in remote.calls) and remote.synced == []

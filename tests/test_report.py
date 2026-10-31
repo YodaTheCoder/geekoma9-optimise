@@ -59,3 +59,14 @@ def test_write_readme_appends_markers_when_missing(tmp_path):
     readme.write_text("# Findings\n")
     write_readme(readme, "x")
     assert readme.read_text() == "# Findings\n\n<!-- results:start -->\nx\n<!-- results:end -->\n"
+
+
+def test_unscored_counts_plan_entries_without_a_result():
+    plan = [("t1", 1), ("t2", 1), ("t3", 1), ("t4", 1)]
+    recs = [r("pass", 10, task="t1"),
+            r("infra_error", 1, task="t2"),                                  # retry still owed
+            r("infra_error", 1, task="t3"), r("infra_error", 1, task="t3")]  # given up
+    s = summarize(recs, plan)
+    assert s.unscored == 2  # t2 and t4
+    assert summarize(recs).unscored == 0  # no plan, nothing known
+    assert "| unscored | 2 |" in render_markdown(s, recs)

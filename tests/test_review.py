@@ -88,7 +88,7 @@ def test_review_experiment_skips_done_and_non_pass(tmp_path):
     git = FakeGit()
     assert review.review_experiment(exp, runner=runner, git=git) == 0
     assert len(prompts) == 1 and "issue for refs/tags/taskset-v1:tasks/t2/issue.md" in prompts[0]
-    assert "base-v1..refs/heads/b-t2-1" in prompts[0]
+    assert "base-v1..refs/remotes/origin/b-t2-1" in prompts[0]
     got = review.read_reviews(exp / "reviews.jsonl")
     assert [(r.task, r.reviewer) for r in got] == [("t1", "claude-opus"), ("t2", "claude-opus")]
     # rerun reviews nothing
@@ -110,20 +110,39 @@ def test_review_retries_then_gives_up(tmp_path):
     assert [r.task for r in review.read_reviews(exp / "reviews.jsonl")] == ["t1"]
 
 
-def test_branch_falls_back_to_origin(tmp_path):
+def test_fetched_origin_is_the_evidence(tmp_path):
+    # After a good fetch only the pushed branch counts: a stale local ref is never reviewed.
     exp = _setup(tmp_path, [_rec("t1", 1, branch="tests")])
 
     class G(FakeGit):
         def __call__(self, args):
-            if args[0] == "diff" and "origin/" not in args[1]:
+            if args[0] == "diff" and "origin/" in args[1]:
+                self.calls.append(args)
+                raise subprocess.CalledProcessError(128, "git")
+            return super().__call__(args)
+
+    git = G()
+    assert review.review_experiment(exp, runner=lambda p: json.dumps(GOOD), git=git) == 1
+    diffs = [a[1] for a in git.calls if a[0] == "diff"]
+    assert diffs == ["base-v1..refs/remotes/origin/tests"]
+
+
+def test_local_ref_used_only_when_fetch_failed(tmp_path):
+    exp = _setup(tmp_path, [_rec("t1", 1, branch="tests")])
+
+    class G(FakeGit):
+        def __call__(self, args):
+            if args[0] == "fetch":
+                raise subprocess.CalledProcessError(1, "git")
+            if args[0] == "diff" and "origin/" in args[1]:
                 self.calls.append(args)
                 raise subprocess.CalledProcessError(128, "git")
             return super().__call__(args)
 
     git = G()
     assert review.review_experiment(exp, runner=lambda p: json.dumps(GOOD), git=git) == 0
-    assert "base-v1..refs/heads/tests" in git.calls[-2][1]
-    assert "base-v1..refs/remotes/origin/tests" in git.calls[-1][1]
+    diffs = [a[1] for a in git.calls if a[0] == "diff"]
+    assert diffs == ["base-v1..refs/remotes/origin/tests", "base-v1..refs/heads/tests"]
 
 
 def test_fetch_failure_only_warns(tmp_path, capsys):

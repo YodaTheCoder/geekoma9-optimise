@@ -118,12 +118,17 @@ CHECKS = (check_python, check_godot, check_ollama, check_deploy_key, check_sudo,
           check_model_store, check_agent_user)
 
 
+def sync_scripts(remote: Remote, scripts_src: Path = SCRIPTS_SRC) -> None:
+    """Copy harness/remote_scripts to ~/agentbench/bin (also done at the start of every run)."""
+    remote.run(f"mkdir -p {ROOT}/bin")
+    remote.sync_dir(scripts_src, f"{ROOT}/bin")
+    remote.run(f"chmod +x {ROOT}/bin/*")
+
+
 def provision(remote: Remote, scripts_src: Path = SCRIPTS_SRC) -> int:
     """Sync scripts, ensure the mirror, run every check. Non-zero names the first failure."""
     try:
-        remote.run(f"mkdir -p {ROOT}/bin")
-        remote.sync_dir(scripts_src, f"{ROOT}/bin")
-        remote.run(f"chmod +x {ROOT}/bin/*")
+        sync_scripts(remote, scripts_src)
         print(f"synced remote scripts to {ROOT}/bin")
         remote.run(f"test -d {shlex.quote(MIRROR)} || git clone --mirror "
                    f"{MIRROR_CLONE_URL} {shlex.quote(MIRROR)}", timeout=300)

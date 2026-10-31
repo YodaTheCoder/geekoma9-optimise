@@ -134,10 +134,15 @@ def make_git(bench: Path) -> Git:
     return git
 
 
-def _diff(git: Git, task_set: str, branch: str) -> str:
+def _diff(git: Git, task_set: str, branch: str, fetched: bool) -> str:
+    # The pushed branch is the evidence: after a good fetch only origin's ref counts (a local
+    # branch can be stale); the local ref is a fallback only when the fetch failed.
     # Fully qualified refs: a branch named `tests` would collide with the tests/ directory.
+    refs = [f"refs/remotes/origin/{branch}"]
+    if not fetched:
+        refs.append(f"refs/heads/{branch}")
     last: Exception | None = None
-    for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+    for ref in refs:
         try:
             return git(["diff", f"base-{task_set}..{ref}", "--", ".", ":(exclude)tasks"])
         except subprocess.CalledProcessError as e:
@@ -172,16 +177,18 @@ def review_experiment(exp_dir: Path, runner: Runner | None = None, git: Git | No
             if r.status == "pass" and (r.task, r.repeat, r.branch) not in done]
     if not todo:
         return 0
+    fetched = True
     try:
         git(["fetch", "origin"])
     except (subprocess.CalledProcessError, OSError) as e:
-        print(f"warning: git fetch failed ({e}); using local refs", file=sys.stderr)
+        fetched = False
+        print(f"warning: git fetch failed ({e}); falling back to local refs", file=sys.stderr)
     failed = 0
     for rec in todo:
         label = f"{rec.task} r{rec.repeat} ({rec.branch})"
         try:
             issue = git(["show", f"refs/tags/taskset-{cfg.task_set}:tasks/{rec.task}/issue.md"])
-            diff = _diff(git, cfg.task_set, rec.branch)
+            diff = _diff(git, cfg.task_set, rec.branch, fetched)
             merge, quality, comments = _ask(runner, build_review_prompt(issue, diff))
         except (ValueError, subprocess.SubprocessError, OSError) as e:
             print(f"warning: could not review {label}: {e}", file=sys.stderr)

@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 from harness.agents import make_agent
 from harness.agents.base import Agent, AgentResult
 from harness.bench import BenchRepo
-from harness.config import ExperimentConfig
+from harness.config import ConfigError, ExperimentConfig, check_safe_id
 from harness.paths import AGENT_USER, ROOT, AttemptPaths, attempt_paths
+from harness.provision import SCRIPTS_SRC, sync_scripts
 from harness.remote import Remote, RemoteError
 from harness.results import AttemptRecord, append_record, pending, read_records
 from harness.runtimes import make_runtime
@@ -33,6 +38,8 @@ PROXY_FLUSH_S = 2  # let the proxy write its last usage row before it is stopped
 SCORE_TIMEOUT_S = 3000  # score.sh: import 300 + two GUT suites 600 each + extra 1300, plus slack
 SYSTEM_OLLAMA_STOP = "sudo -n systemctl stop ollama"
 SYSTEM_OLLAMA_START = "sudo -n systemctl start ollama"
+SYSTEM_OLLAMA_ACTIVE = "systemctl is-active ollama"
+RUN_LOCK = f"{ROOT}/run.lock"
 # Bracket trick: the pattern does not match the shell running pgrep itself.
 PREFLIGHT_CMD = "pgrep -u markn -f '[g]odot|agentbench/[r]uns/|agentbench/[b]in/'"
 # Nothing may run as the agent user between attempts (and before task files are exported).
@@ -49,6 +56,70 @@ class InfraError(Exception):
 
 class HostDirtyError(Exception):
     """Stray processes survived the cleanup kill: stop the experiment (not an attempt record)."""
+
+
+class RuntimeRestartError(Exception):
+    """The runtime would not restart after an infra_error: stop the experiment, recording
+    nothing for the untried retry, so a resume reruns it."""
+
+
+class RunLockedError(Exception):
+    """Another `harness run` holds the remote run lock."""
+
+
+def config_hash(cfg: ExperimentConfig) -> str:
+    """sha256 of the loaded config's canonical JSON."""
+    return hashlib.sha256(json.dumps(asdict(cfg), sort_keys=True, separators=(",", ":"))
+                          .encode()).hexdigest()
+
+
+def scripts_hash(src: Path = SCRIPTS_SRC) -> str:
+    """sha256 over the remote scripts' relative paths and contents (bytecode caches skipped)."""
+    h = hashlib.sha256()
+    for f in sorted(p for p in Path(src).rglob("*") if p.is_file()
+                    and "__pycache__" not in p.parts and p.suffix != ".pyc"):
+        h.update(f.relative_to(src).as_posix().encode() + b"\0" + f.read_bytes() + b"\0")
+    return h.hexdigest()
+
+
+def _check_config_unchanged(results: Path, records: list[AttemptRecord], current: str) -> None:
+    """A run_id holds one config: refuse to resume under a different one."""
+    old = sorted({r.versions["config"] for r in records if "config" in r.versions} - {current})
+    if old:
+        raise ConfigError(
+            f"{results} was written with config {old[0]}, but the config now hashes to {current}; "
+            f"restore config.yaml, or start a new run (remove run_id and move results.jsonl away)")
+
+
+def _acquire_run_lock(remote: Remote) -> int:
+    """Take `flock -n` on the remote run lock, held by a detached helper; return its pid."""
+    lock = shlex.quote(RUN_LOCK)
+    r = remote.run(
+        f"out=$(mktemp); setsid nohup flock -n {lock} bash -c 'echo locked; exec sleep infinity' "
+        f'> "$out" 2>&1 < /dev/null & pid=$!; '
+        f'for i in $(seq 50); do if grep -q locked "$out"; then rm -f "$out"; echo $pid; exit 0; fi; '
+        f'if ! kill -0 $pid 2>/dev/null; then rm -f "$out"; exit 75; fi; sleep 0.1; done; exit 1',
+        check=False)
+    if r.returncode == 75:
+        raise RunLockedError(f"another harness run holds {RUN_LOCK} on the host; wait for it "
+                             f"to finish (only one run at a time)")
+    try:
+        if r.returncode == 0:
+            return int(r.stdout.strip())
+    except ValueError:
+        pass
+    raise InfraError(f"could not take {RUN_LOCK} (exit {r.returncode})")
+
+
+def _interrupt(signum, frame):
+    raise KeyboardInterrupt(f"signal {signum}")
+
+
+def _install_signal_handlers() -> dict:
+    """SIGTERM/SIGHUP raise KeyboardInterrupt so the cleanup `finally`s run."""
+    if threading.current_thread() is not threading.main_thread():
+        return {}
+    return {sig: signal.signal(sig, _interrupt) for sig in (signal.SIGTERM, signal.SIGHUP)}
 
 
 def _agent_procs(remote: Remote) -> list[str]:
@@ -133,12 +204,18 @@ def preflight(remote: Remote, runtime: Runtime) -> None:
 
 
 def harness_version() -> str:
+    """Short HEAD sha, with `-dirty` when the harness code has uncommitted changes (the
+    experiments' own results and READMEs change during a run and are not counted)."""
+    repo = Path(__file__).resolve().parent.parent
     try:
-        r = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
-                           cwd=Path(__file__).resolve().parent.parent, check=True)
-        return r.stdout.strip()
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
+                             text=True, cwd=repo, check=True).stdout.strip()
+        status = subprocess.run(["git", "status", "--porcelain", "--", "harness", "pyproject.toml",
+                                 "uv.lock"], capture_output=True, text=True, cwd=repo,
+                                check=True).stdout
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
+    return f"{sha}-dirty" if status.strip() else sha
 
 
 def _short_error(e: BaseException) -> str:
@@ -206,10 +283,14 @@ def _record(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, branch: 
 
 def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, remote: Remote,
                 runtime: Runtime, agent: Agent, bench: BenchRepo, scripts_dir: str = SCRIPTS_DIR,
-                harness_sha: str | None = None, clock=time) -> AttemptRecord:
-    """Run one attempt end to end. Infrastructure failures become an infra_error record."""
+                harness_sha: str | None = None, scripts_sha: str | None = None,
+                try_n: int = 1, clock=time) -> AttemptRecord:
+    """Run one attempt end to end. Infrastructure failures become an infra_error record.
+
+    Each try has its own branch (`-t2` for the retry), so a pushed infra_error try never
+    hides the retry's evidence."""
     paths = attempt_paths(run_id, task, repeat)
-    branch = f"exp/{run_id}/{task}-r{repeat}"
+    branch = f"exp/{run_id}/{task}-r{repeat}" + (f"-t{try_n}" if try_n > 1 else "")
     since = int(clock.time())
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(since))
     # Pinned on every record, infra_error included; runtime fields are added when available.
@@ -218,7 +299,10 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
         "harness": harness_sha if harness_sha is not None else harness_version(),
         "task_set": cfg.task_set,
         "sampling": json.dumps(cfg.sampling, sort_keys=True),
+        "config": config_hash(cfg),
     }
+    if scripts_sha is not None:
+        versions["remote_scripts"] = scripts_sha
     result: AgentResult | None = None
     try:
         preflight(remote, runtime)
@@ -307,8 +391,8 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
 def _run_id(cfg: ExperimentConfig, exp_dir: Path, clock) -> str:
     f = exp_dir / "run_id"
     if f.exists() and f.read_text().strip():
-        return f.read_text().strip()
-    run_id = f"{cfg.id}-{time.strftime('%Y%m%d%H%M', time.localtime(clock.time()))}"
+        return check_safe_id(f.read_text().strip(), f"run_id ({f})")
+    run_id = f"{cfg.id}-{time.strftime('%Y%m%d%H%M%S', time.localtime(clock.time()))}"
     f.write_text(run_id + "\n")
     return run_id
 
@@ -321,17 +405,39 @@ def run_experiment(cfg: ExperimentConfig, exp_dir: Path, *, remote: Remote, benc
     exp_dir.mkdir(parents=True, exist_ok=True)
     results = exp_dir / "results.jsonl"
     runtime = runtime or make_runtime(cfg.runtime)
-    agent = agent or make_agent(cfg.agent)
+    agent = agent or make_agent(cfg.agent, task_set=cfg.task_set, mirror=bench.mirror)
     sha = harness_sha if harness_sha is not None else harness_version()
     run_id = _run_id(cfg, exp_dir, clock)
-    todo = pending(tier_plan(cfg), read_records(results))
+    records = read_records(results)
+    _check_config_unchanged(results, records, config_hash(cfg))
+    todo = pending(tier_plan(cfg), records)
 
-    bench.update()
-    remote.run(f"mkdir -p {ROOT}/runs && {CLOSE_OLD_ATTEMPTS}")
-    # The owner's system Ollama owns the GPU and port 11434: stop it for the run, and bring it
-    # back afterwards whatever happens (the stop sits inside the try so a half-failed stop is
-    # still followed by a start).
+    lock_pid = _acquire_run_lock(remote)
+    handlers = _install_signal_handlers()
     try:
+        # The records name the scripts that score them: sync them now, and pin their hash.
+        sync_scripts(remote)
+        scripts_sha = scripts_hash()
+        bench.update()
+        remote.run(f"mkdir -p {ROOT}/runs && {CLOSE_OLD_ATTEMPTS}")
+        _run_loop(cfg, results, run_id, todo, remote=remote, runtime=runtime, agent=agent,
+                  bench=bench, scripts_dir=scripts_dir, sha=sha, scripts_sha=scripts_sha,
+                  clock=clock)
+    finally:
+        for sig, old in handlers.items():
+            signal.signal(sig, old)
+        _stop_helper(remote, lock_pid)
+
+
+def _run_loop(cfg: ExperimentConfig, results: Path, run_id: str, todo: list[tuple[str, int]], *,
+              remote: Remote, runtime: Runtime, agent: Agent, bench: BenchRepo, scripts_dir: str,
+              sha: str, scripts_sha: str, clock) -> None:
+    # The owner's system Ollama owns the GPU and port 11434: stop it for the run, and bring it
+    # back afterwards (only if it was running) whatever happens. The stop sits inside the try
+    # so a half-failed stop is still followed by a start.
+    was_active = False
+    try:
+        was_active = remote.run(SYSTEM_OLLAMA_ACTIVE, check=False).stdout.strip() == "active"
         remote.run(SYSTEM_OLLAMA_STOP)
         runtime.start(remote)
         for i, (task, repeat) in enumerate(todo):
@@ -342,7 +448,8 @@ def run_experiment(cfg: ExperimentConfig, exp_dir: Path, *, remote: Remote, benc
             while True:
                 rec = run_attempt(cfg, run_id, task, repeat, remote=remote, runtime=runtime,
                                   agent=agent, bench=bench, scripts_dir=scripts_dir,
-                                  harness_sha=sha, clock=clock)
+                                  harness_sha=sha, scripts_sha=scripts_sha,
+                                  try_n=infra_count + 1, clock=clock)
                 append_record(results, rec)
                 if rec.status != "infra_error":
                     break
@@ -352,13 +459,11 @@ def run_experiment(cfg: ExperimentConfig, exp_dir: Path, *, remote: Remote, benc
                 try:
                     runtime.start(remote)
                 except (InfraError, *INFRA_EXCEPTIONS) as e:
-                    if infra_count < 2:
-                        append_record(results, _record(
-                            cfg, run_id, task, repeat, f"exp/{run_id}/{task}-r{repeat}",
-                            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(clock.time())),
-                            versions=rec.versions,
-                            error=f"runtime restart failed: {_short_error(e)}"))
-                    break
+                    # Host or network down: recording the untried retry would mark it done
+                    # and burn the rest of the plan. Stop; a resume reruns it.
+                    raise RuntimeRestartError(
+                        f"runtime restart failed after an infra_error on {task} r{repeat}: "
+                        f"{_short_error(e)}") from e
                 if infra_count >= 2:
                     break
                 # A host the kill could not clean would fail every remaining attempt (and mark
@@ -377,4 +482,5 @@ def run_experiment(cfg: ExperimentConfig, exp_dir: Path, *, remote: Remote, benc
             runtime.stop(remote)
         except Exception as e:  # noqa: BLE001
             print(f"warning: runtime stop failed: {_short_error(e)}", file=sys.stderr)
-        _restore_system_ollama(remote, clock)
+        if was_active:
+            _restore_system_ollama(remote, clock)

@@ -14,6 +14,7 @@ class FakeRemote:
         self.written: dict[str, str] = {}
         self.files: dict[str, str] = {}
         self.replies: list[tuple[str, subprocess.CompletedProcess]] = []
+        self.synced: list[tuple[str, str]] = []
 
     def reply(self, substr: str, returncode: int = 0, stdout: str = "") -> None:
         self.replies.append((substr, subprocess.CompletedProcess([], returncode, stdout, "")))
@@ -31,6 +32,10 @@ class FakeRemote:
 
     def write_text(self, path, text):
         self.written[path] = text
+
+    def sync_dir(self, local, remote_path):
+        self.calls.append(f"<sync {local} -> {remote_path}>")
+        self.synced.append((str(local), remote_path))
 
 
 @pytest.fixture

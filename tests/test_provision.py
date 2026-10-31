@@ -10,7 +10,6 @@ from harness.remote import RemoteError
 class ProvRemote(FakeRemote):
     def __init__(self):
         super().__init__()
-        self.synced: list[tuple[str, str]] = []
         self.reply("python3 --version", stdout="Python 3.12.3\n")
         self.reply(".godot-version", stdout="4.7.2-stable\n")
         self.reply("godot --version", stdout="4.7.2.stable.official.ed1daf0bf\n")
@@ -25,8 +24,6 @@ class ProvRemote(FakeRemote):
                    stdout="/home/markn/agentbench/runs/e0-1/001-a-r1/work\n")
         self.reply("test -r", returncode=1)  # agentrun can read neither the mirror nor attempts
 
-    def sync_dir(self, local, remote_path):
-        self.synced.append((str(local), remote_path))
 
 
 def failing(remote, substr, rc=1, stdout="nope"):

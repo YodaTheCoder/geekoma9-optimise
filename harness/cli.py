@@ -13,7 +13,7 @@ from harness.remote import Remote
 from harness.report import render_markdown, summarize, write_readme
 from harness.results import read_records
 from harness.review import DEFAULT_BENCH, review_experiment
-from harness.run import run_experiment
+from harness.run import RunLockedError, run_experiment
 from harness.tiers import tier_plan
 
 # validate only needs a runtime that starts; the E0 baseline model is already pulled.
@@ -23,7 +23,9 @@ VALIDATE_CONTEXT = 65536
 
 def _report(exp_dir: Path) -> None:
     records = read_records(exp_dir / "results.jsonl")
-    write_readme(exp_dir / "README.md", render_markdown(summarize(records), records))
+    config = exp_dir / "config.yaml"
+    plan = tier_plan(load_config(config)) if config.exists() else None
+    write_readme(exp_dir / "README.md", render_markdown(summarize(records, plan), records))
 
 
 def _run(cfg: ExperimentConfig, exp_dir: Path) -> None:
@@ -110,6 +112,9 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as e:
         print(f"config error: {e}", file=sys.stderr)
         return 2
+    except RunLockedError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

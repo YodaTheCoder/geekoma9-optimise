@@ -4,7 +4,7 @@ import statistics
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from harness.results import AttemptRecord
+from harness.results import AttemptRecord, pending
 
 START = "<!-- results:start -->"
 END = "<!-- results:end -->"
@@ -15,6 +15,7 @@ class Summary:
     attempts: int  # all records, infra_error included
     passes: int
     infra_errors: int
+    unscored: int  # plan entries still owed a result (no scored record, < 2 infra_errors)
     pass_rate: float  # passes / scored (non-infra) attempts
     wall_hours: float  # scored attempts only
     solved_per_8h: float
@@ -28,8 +29,10 @@ def _median(values: list[float | None]) -> float | None:
     return statistics.median(present) if present else None
 
 
-def summarize(records: list[AttemptRecord]) -> Summary:
-    """Headline metrics; infra_error records never count for or against the config."""
+def summarize(records: list[AttemptRecord],
+              plan: list[tuple[str, int]] | None = None) -> Summary:
+    """Headline metrics; infra_error records never count for or against the config.
+    With the tier's `plan`, `unscored` says how many entries the sample is short."""
     scored = [r for r in records if r.status != "infra_error"]
     passes = sum(1 for r in scored if r.status == "pass")
     wall_hours = sum(r.wall_s for r in scored) / 3600
@@ -37,6 +40,7 @@ def summarize(records: list[AttemptRecord]) -> Summary:
         attempts=len(records),
         passes=passes,
         infra_errors=len(records) - len(scored),
+        unscored=len(pending(plan, records)) if plan else 0,
         pass_rate=passes / len(scored) if scored else 0.0,
         wall_hours=wall_hours,
         solved_per_8h=passes / wall_hours * 8 if wall_hours > 0 else 0.0,
