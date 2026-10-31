@@ -92,10 +92,40 @@ Template rules, from the plan's `render_command`:
 speaks plain OpenAI chat completions that work unchanged on Ollama and llama-server, and its fixed prompt (about 7k
 tokens) costs roughly a quarter of Claude Code's (about 33k) on a PP-bound iGPU.
 
+## Runner contract (applies to every template)
+- **Working directory:** the harness `CommandAgent` always runs a template as
+  `cd <workdir> && setsid timeout -k 30 <timeout_s> bash -c <rendered>` (controller ruling; plan `agents/command.py`).
+  So the cwd is always the workdir. Templates that omit `{workdir}` (claude-code, mini-swe-agent) rely on this.
+  OpenCode also passes `--dir {workdir}` explicitly.
+- **Timeout:** every agent is wrapped in `timeout` with the 2700 s per-attempt budget. That timeout is the
+  only guard against the known claude-code hang with small local models through the Anthropic route (#51239).
+  A hang shows up as `timed_out` (exit 124/137), not as a stuck run.
+- **Claude Code auth:** `--bare` may restrict auth to `ANTHROPIC_API_KEY` or `apiKeyHelper`, so the template
+  sets both `ANTHROPIC_API_KEY=local` and `ANTHROPIC_AUTH_TOKEN=local`. If the dry run shows `--bare` still
+  prompts for login or rejects the key, drop `--bare` and keep the rest. That costs prompt overhead but nothing else.
+- **Model-ID coupling (OpenCode):** an OpenCode custom provider accepts only the model IDs listed in its
+  config. The install config lists the Ollama refs of the shortlisted models, plus gemma4, so
+  `-m bench/{model}` works only when `{model}` is one of those IDs. For E2 llama.cpp runs, do one of these:
+  - (a) Preferred: start `llama-server` with `--alias <ollama ref>`, e.g. `--alias qwen3-coder:30b`, and pass
+    that same ref as `{model}`. llama-server serves a single model and reports the alias as its model name.
+  - (b) Regenerate `~/.config/agentbench/opencode.json` per experiment with that run's model ID before
+    starting it.
+  - claude-code and mini-swe-agent pass `{model}` straight through and are not affected.
+
 ## To verify before E0 (Task 16 dry run)
+- **Acceptance check for the E0 pairing (qwen3-coder:30b + OpenCode through Ollama):**
+  - Why: this pairing is the documented failure case. qwen3-coder can flip to Hermes-XML tool calls that
+    OpenCode cannot parse (#24824).
+  - Pass: in the dry-run agent log, the attempt has at least one `"type":"tool_use"` event, and there are
+    no `invalid` / "Invalid Tool" errors and no `<tool_call>` / `<function=` text in assistant output.
+  - If the flip reproduces: E0 keeps qwen3-coder:30b (the spec fixes the E0 model) and switches harness to
+    `mini-swe-agent`, whose single bash tool is the least format-sensitive.
+  - Record the OpenCode failure in the E0 README. `north-mini-code-1.0` + OpenCode then becomes the first
+    E3 pairing, because that model was trained for OpenCode.
+  - If the flip does not reproduce: E0 uses `opencode` as shortlisted.
 - `{env:BENCH_ENDPOINT}` substitution in `options.baseURL`. The docs show it only for `apiKey`.
 - The exact `tool_use` JSON spacing in `opencode run --format json`, so the regex matches.
-- That `--bare` exists in claude-code 2.1.316 and still honours `ANTHROPIC_*` env auth.
+- That `--bare` exists in claude-code 2.1.316 and accepts `ANTHROPIC_API_KEY` (fallback above).
 - The `mini` console step-header format, and whether chained `-c mini.yaml -c key=value` works in v2.4.6.
 
 ## Sources

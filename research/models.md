@@ -51,7 +51,8 @@ measured from the Ollama logs on geekoma9 (`memory.md`).
   The vLLM parser is `cohere_command4`. No llama.cpp parser is documented, so verify tool calls under
   `llama-server --jinja` in E2.
 - GDScript: no evidence found.
-- Memory: Unsloth GGUFs include UD-Q4_K_XL (19.3 GB), MXFP4_MOE (18.7) and UD-Q5_K_M (23.0).
+- Memory: the pulled Ollama `q4_K_M` is 18.6 GB, which is the `est_weights_gb` in the shortlist. Unsloth GGUFs for
+  llama.cpp runs include UD-Q4_K_M (19.2 GB), UD-Q4_K_XL (19.3), MXFP4_MOE (18.7) and UD-Q5_K_M (23.0).
 
 ### gpt-oss-20b (OpenAI)
 - 21B total, 3.6B active, MXFP4 native, 131072 context. SWE-bench Verified 60.7 at high reasoning (model card),

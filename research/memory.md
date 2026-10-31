@@ -36,8 +36,9 @@ headless Godot for scoring all run there. This is the main argument for a smalle
 
 ## BIOS UMA options
 
-- Verified: the A9 Max BIOS accepts a **24 GiB** carve-out (the current setting) and a small
-  carve-out of about 4–5 GiB (the September 24 state above). The full option list is not
+- Verified: the A9 Max BIOS accepts a **24 GiB** carve-out (the current setting, read from sysfs).
+- Inferred: it also accepts a small carve-out of about 4–5 GiB. This comes from the September 24
+  Ollama log above (27.0 GiB system RAM), not from the BIOS screen. The full option list is not
   published by GEEKOM, and no owner screenshot was found. Notebookcheck's review lists "limited
   BIOS options" as a drawback.
 - AMD's general guidance is that the setting is normally "Auto", and that 1–2 GB is suggested
@@ -66,7 +67,7 @@ headless Godot for scoring all run there. This is the main argument for a smalle
 | Runtime | Uses GTT beyond the carve-out? | Evidence |
 |---|---|---|
 | llama.cpp Vulkan (RADV) | **Yes, most likely.** RADV exposes GTT-backed memory, and Strix Halo users see Vulkan reporting more memory than ROCm after raising TTM. Set `RADV_PERFTEST=nogttspill` if performance drops. | Level1Techs Strix Halo thread; llama.cpp Vulkan discussion #10879 |
-| llama.cpp ROCm/HIP (lemonade `llamacpp-rocm` gfx1150 build) | **Probably yes, once TTM is raised.** For gfx1150 the lemonade README says OOM "despite free VRAM" is fixed by `ttm.pages_limit=12582912`. Lemonade's FAQ warns that ROCm "does not support splitting memory across multiple pools". | lemonade-sdk/llamacpp-rocm README; Lemonade FAQ |
+| llama.cpp ROCm/HIP (lemonade `llamacpp-rocm` gfx1150 build) | **Probably yes, once TTM is raised.** For gfx1150 the lemonade README says OOM "despite free VRAM" is fixed by `ttm.pages_limit=12582912`. That value is 48 GiB, a large-RAM (Strix Halo-class) example that exceeds this 32 GB box; here use at most about 6291456 (24 GiB). Lemonade's FAQ warns that ROCm "does not support splitting memory across multiple pools". | lemonade-sdk/llamacpp-rocm README; Lemonade FAQ |
 | llama.cpp HIP UMA detection | Upstream PR #27083 (merged 2026-08-17) skips the "UMA = MemAvailable" override for HIP builds. Older builds under-report free memory on APUs (issue #18159). | llama.cpp #18159 |
 | Ollama 0.34.4 (ROCm 7.2 backend) | **Unknown.** It reports `total=24.0 GiB`, the carve-out only. In January 2026, a Strix Point user with a 512 MiB carve-out got "insufficient VRAM" on Ollama 0.13.5 and full offload on 0.14.1. It is not known how 0.34.4 sizes memory at a small carve-out. | NixOS Discourse thread; geekoma9 journal |
 

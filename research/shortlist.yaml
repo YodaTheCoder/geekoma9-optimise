@@ -110,7 +110,7 @@ models:
   - name: north-mini-code-1.0
     ollama_ref: "north-mini-code-1.0:q4_K_M"
     gguf_repo: unsloth/North-Mini-Code-1.0-GGUF
-    quants: [UD-Q4_K_M, UD-Q4_K_XL, MXFP4_MOE, UD-Q5_K_M]
+    quants: [Q4_K_M, UD-Q4_K_XL, MXFP4_MOE, UD-Q5_K_M]
     total_params_b: 30.5
     active_params_b: 3.0
     est_weights_gb: 18.6
@@ -170,7 +170,7 @@ harnesses:
     api: anthropic
     install: "curl -fsSL https://claude.ai/install.sh | bash -s 2.1.316"
     command_template: >-
-      ANTHROPIC_BASE_URL={endpoint} ANTHROPIC_AUTH_TOKEN=local ANTHROPIC_MODEL={model}
+      ANTHROPIC_BASE_URL={endpoint} ANTHROPIC_API_KEY=local ANTHROPIC_AUTH_TOKEN=local ANTHROPIC_MODEL={model}
       ANTHROPIC_DEFAULT_HAIKU_MODEL={model} CLAUDE_CODE_ATTRIBUTION_HEADER=0
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1
       "$HOME/.local/bin/claude" -p --bare --dangerously-skip-permissions --output-format stream-json --verbose
