@@ -24,7 +24,7 @@ HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailer", "transfer-encoding", "upgrade", "proxy-connection",
 }
-MAX_CAPTURE = 64 * 1024 * 1024  # cap on the copy kept for usage extraction
+MAX_CAPTURE = 64 * 1024 * 1024  # usage copy keeps only the last this-many bytes
 
 
 def _pick(d: dict, *keys: str):
@@ -136,6 +136,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
                 conn.request(self.command, self.path, body=body or None, headers=headers)
                 resp = conn.getresponse()
             except (OSError, http.client.HTTPException):
+                conn.close()
                 row["upstream_error"] = True
                 row["status"] = 502
                 msg = b"usage_proxy: upstream connection failed\n"
@@ -160,39 +161,51 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             try:
                 while not no_body:
-                    data = resp.read1(65536)
+                    try:
+                        data = resp.read1(65536)
+                    except Exception:  # any failure reading upstream is an upstream error
+                        row["upstream_error"] = True
+                        self.close_connection = True
+                        break
                     if not data:
                         break
                     if row["ttft_s"] is None:
                         row["ttft_s"] = round(time.monotonic() - start, 6)
-                    if len(captured) < MAX_CAPTURE:
-                        captured += data
-                    if chunked:
-                        self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data))
-                    else:
-                        self.wfile.write(data)
-                    self.wfile.flush()
-                if chunked:
-                    self.wfile.write(b"0\r\n\r\n")
-                    self.wfile.flush()
-            except (OSError, http.client.HTTPException) as e:
-                # Mid-stream failure: headers are gone, so just drop the client connection.
-                if not isinstance(e, (BrokenPipeError, ConnectionResetError)):
-                    row["upstream_error"] = True
-                self.close_connection = True
+                    captured += data
+                    if len(captured) > MAX_CAPTURE:
+                        del captured[:len(captured) - MAX_CAPTURE]  # keep the tail: usage comes last
+                    try:
+                        if chunked:
+                            self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data))
+                        else:
+                            self.wfile.write(data)
+                        self.wfile.flush()
+                    except OSError:  # client went away
+                        self.close_connection = True
+                        break
+                else:
+                    data = None
+                if chunked and not row["upstream_error"] and not self.close_connection:
+                    try:
+                        self.wfile.write(b"0\r\n\r\n")
+                        self.wfile.flush()
+                    except OSError:
+                        self.close_connection = True
             finally:
                 conn.close()
         except (BrokenPipeError, ConnectionResetError):
             self.close_connection = True
         finally:
             row["duration_s"] = round(time.monotonic() - start, 6)
-            data = bytes(captured)
-            if encoding in ("gzip", "deflate") and data:
-                try:
+            if row["status"] is not None and row["status"] >= 500:
+                row["upstream_error"] = True
+            try:
+                data = bytes(captured)
+                if encoding in ("gzip", "deflate") and data:
                     data = zlib.decompress(data, 16 + zlib.MAX_WBITS if encoding == "gzip" else 15)
-                except zlib.error:
-                    data = b""
-            row["prompt_tokens"], row["gen_tokens"] = extract_usage(data, ctype)
+                row["prompt_tokens"], row["gen_tokens"] = extract_usage(data, ctype)
+            except Exception:  # never let extraction stop the log line being written
+                row["prompt_tokens"] = row["gen_tokens"] = None
             self.log.write(row)
 
     do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _proxy

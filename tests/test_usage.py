@@ -110,6 +110,33 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _rows(log, n, timeout=5.0):
+    import time
+    end = time.time() + timeout
+    while time.time() < end:
+        if log.exists():
+            rows = [json.loads(l) for l in log.read_text().splitlines() if l.strip()]
+            if len(rows) >= n:
+                return rows
+        time.sleep(0.05)
+    raise AssertionError(f"log never reached {n} rows")
+
+
+def _start(handler, log):
+    upstream = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    proxy = usage_proxy.make_server("127.0.0.1", 0,
+                                    f"http://127.0.0.1:{upstream.server_address[1]}", str(log))
+    threading.Thread(target=proxy.serve_forever, daemon=True).start()
+    return upstream, proxy
+
+
+def _stop(*servers):
+    for s in servers:
+        s.shutdown()
+        s.server_close()
+
+
 class _Stub(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -144,7 +171,7 @@ def test_proxy_live(tmp_path):
         assert r.status == 200
         assert json.loads(r.read())["usage"]["prompt_tokens"] == 11
         c.close()
-        rows = [json.loads(l) for l in log.read_text().splitlines()]
+        rows = _rows(log, 1)
         assert len(rows) == 1
         assert rows[0]["status"] == 200 and rows[0]["upstream_error"] is False
         assert rows[0]["path"] == "/v1/chat/completions"
@@ -159,7 +186,7 @@ def test_proxy_live(tmp_path):
         r.read()
         assert r.status == 502
         c.close()
-        rows = [json.loads(l) for l in log.read_text().splitlines()]
+        rows = _rows(log, 2)
         assert len(rows) == 2
         assert rows[1]["status"] == 502 and rows[1]["upstream_error"] is True
     finally:
@@ -223,3 +250,131 @@ def test_proxy_streams_incrementally(tmp_path):
         time.sleep(0.05)
     row = json.loads(log.read_text().splitlines()[0])
     assert (row["prompt_tokens"], row["gen_tokens"]) == (3, 4)
+
+
+@pytest.mark.live
+def test_upstream_dies_mid_stream_is_upstream_error(tmp_path):
+    class Dies(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+            b = b'data: {"choices":[]}\n\n'
+            self.wfile.write(b"%x\r\n%s\r\n" % (len(b), b))
+            self.wfile.flush()
+            # hard reset (RST) without terminating the chunked body
+            self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                       b"\x01\x00\x00\x00\x00\x00\x00\x00")
+            self.connection.close()
+            self.close_connection = True
+
+    log = tmp_path / "usage.jsonl"
+    upstream, proxy = _start(Dies, log)
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", proxy.server_address[1], timeout=10)
+        c.request("POST", "/x", body=b"{}")
+        r = c.getresponse()
+        try:
+            r.read()
+        except http.client.IncompleteRead:
+            pass
+        c.close()
+        row = _rows(log, 1)[0]
+        assert row["status"] == 200 and row["upstream_error"] is True
+        assert row["ttft_s"] is not None
+    finally:
+        _stop(proxy, upstream)
+
+
+@pytest.mark.live
+def test_upstream_500_is_upstream_error(tmp_path):
+    class Err(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(500)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+    log = tmp_path / "usage.jsonl"
+    upstream, proxy = _start(Err, log)
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", proxy.server_address[1], timeout=10)
+        c.request("POST", "/x", body=b"{}")
+        r = c.getresponse()
+        r.read()
+        assert r.status == 500
+        c.close()
+        row = _rows(log, 1)[0]
+        assert row["status"] == 500 and row["upstream_error"] is True
+    finally:
+        _stop(proxy, upstream)
+
+
+@pytest.mark.live
+def test_keepalive_and_chunked_request_body(tmp_path):
+    seen = []
+
+    class Echo(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0))
+            seen.append((self.headers.get("Transfer-Encoding"), self.rfile.read(n)))
+            body = b'{"prompt_eval_count":1,"eval_count":2}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    log = tmp_path / "usage.jsonl"
+    upstream, proxy = _start(Echo, log)
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", proxy.server_address[1], timeout=10)
+        c.request("POST", "/a", body=b"first")
+        r = c.getresponse()
+        r.read()
+        assert r.status == 200
+        # second request on the same connection, with a chunked body
+        c.request("POST", "/b", body=iter([b"he", b"llo"]), encode_chunked=True,
+                  headers={"Transfer-Encoding": "chunked"})
+        r = c.getresponse()
+        assert r.read() == b'{"prompt_eval_count":1,"eval_count":2}'
+        c.close()
+        rows = _rows(log, 2)
+        assert [x["path"] for x in rows] == ["/a", "/b"]
+        assert seen[0][1] == b"first"
+        assert seen[1] == (None, b"hello")  # decoded and re-sent with Content-Length
+    finally:
+        _stop(proxy, upstream)
+
+
+def test_capture_keeps_tail_and_extraction_failure_still_logs(monkeypatch, tmp_path):
+    monkeypatch.setattr(usage_proxy, "extract_usage",
+                        lambda *a: (_ for _ in ()).throw(RecursionError()))
+    log = tmp_path / "usage.jsonl"
+    upstream, proxy = _start(_Stub, log)
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", proxy.server_address[1], timeout=10)
+        c.request("POST", "/x", body=b"{}")
+        c.getresponse().read()
+        c.close()
+        row = _rows(log, 1)[0]
+        assert row["status"] == 200 and row["prompt_tokens"] is None
+    finally:
+        _stop(proxy, upstream)
