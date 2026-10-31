@@ -12,7 +12,7 @@ from harness.config import AgentConfig, ExperimentConfig, RuntimeConfig
 from harness.paths import ROOT
 from harness.remote import RemoteError
 from harness.results import append_record, read_records
-from harness.run import InfraError, preflight, run_attempt, run_experiment
+from harness.run import HostDirtyError, InfraError, preflight, run_attempt, run_experiment
 from harness.tiers import TASK_SETS
 
 SCREENING = TASK_SETS["v1"]["screening"]
@@ -289,3 +289,58 @@ def test_push_failure_recorded_not_fatal(tmp_path):
     recs, _, _ = experiment(tmp_path, BenchRemote(), FakeAgent(), bench=FakeBench(push_ok=False))
     assert len(recs) == len(SCREENING)
     assert all(not r.pushed and r.status == "pass" for r in recs)
+
+
+class StrayRemote(BenchRemote):
+    """pgrep reports a stray until pkill runs (or always, if persistent)."""
+
+    def __init__(self, persistent=False):
+        super().__init__()
+        self.persistent = persistent
+        self.killed = False
+
+    def run(self, cmd, timeout=None, check=True):
+        if cmd.startswith("pkill -KILL"):
+            self.killed = True
+        if cmd.startswith("pgrep") and (self.persistent or not self.killed):
+            self.calls.append(cmd)
+            return subprocess.CompletedProcess([], 0, "4242\n", "")
+        return super().run(cmd, timeout, check)
+
+
+def test_strays_cleared_by_pkill_then_retry_runs(tmp_path):
+    remote = StrayRemote()
+    agent = FakeAgent()
+    recs, rt, _ = experiment(tmp_path, remote, agent)
+    assert [r.status for r in recs[:2]] == ["infra_error", "pass"]
+    assert len(recs) == len(SCREENING) + 1 and len(agent.calls) == len(SCREENING)
+    assert "pkill -KILL -u markn -f '[g]odot|agentbench/[r]uns/|agentbench/[b]in/'" in remote.calls
+    assert rt.starts == 2
+
+
+def test_persistent_strays_stop_the_experiment(tmp_path):
+    agent = FakeAgent()
+    rt = FakeRuntime()
+    with pytest.raises(HostDirtyError, match="4242"):
+        experiment(tmp_path, StrayRemote(persistent=True), agent, runtime=rt)
+    recs = read_records(tmp_path / "results.jsonl")
+    assert [(r.task, r.status) for r in recs] == [(SCREENING[0], "infra_error")]
+    assert agent.calls == [] and rt.stops == 1
+    # resume reruns the interrupted attempt
+    recs, _, _ = experiment(tmp_path, BenchRemote(), FakeAgent())
+    assert [r.status for r in recs if r.task == SCREENING[0]] == ["infra_error", "pass"]
+
+
+def test_preflight_infra_record_still_pins_versions():
+    remote = BenchRemote()
+    remote.replies.insert(0, ("pgrep", subprocess.CompletedProcess([], 0, "4242\n", "")))
+    rec = attempt(remote)
+    assert rec.versions == {"agent": "aider 0.9", "harness": "deadbee", "task_set": "v1",
+                            "sampling": '{"temperature": 0.2}'}
+
+
+def test_proxy_probe_is_tcp_only():
+    remote = BenchRemote()
+    attempt(remote)
+    assert any("/dev/tcp/127.0.0.1/11500" in c for c in remote.calls)
+    assert not any("curl" in c for c in remote.calls)

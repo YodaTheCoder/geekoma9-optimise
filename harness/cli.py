@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 from harness.bench import BenchRepo
-from harness.config import AgentConfig, ConfigError, ExperimentConfig, RuntimeConfig, load_config
+from harness.config import ConfigError, ExperimentConfig, load_config
 from harness.remote import Remote
 from harness.report import render_markdown, summarize, write_readme
 from harness.results import read_records
@@ -50,16 +50,17 @@ def _offenders(cfg: ExperimentConfig, exp_dir: Path, expected: str) -> list[str]
 def cmd_validate(args) -> int:
     bad: list[str] = []
     for kind, expected in (("null", "fail"), ("oracle", "pass")):
-        cfg = ExperimentConfig(
-            id=f"validate-{args.task_set}-{kind}", task_set=args.task_set, tier="all",
-            runtime=RuntimeConfig(kind="ollama", model=args.model, context=VALIDATE_CONTEXT),
-            agent=AgentConfig(kind=kind, name=kind), cooldown_s=0)
-        exp_dir = Path(args.experiments_dir) / cfg.id
+        exp_id = f"validate-{args.task_set}-{kind}"
+        exp_dir = Path(args.experiments_dir) / exp_id
         exp_dir.mkdir(parents=True, exist_ok=True)
         (exp_dir / "config.yaml").write_text(yaml.safe_dump({
-            "id": cfg.id, "task_set": cfg.task_set, "tier": cfg.tier, "cooldown_s": 0,
+            "id": exp_id, "task_set": args.task_set, "tier": "all", "cooldown_s": 0,
             "runtime": {"kind": "ollama", "model": args.model, "context": VALIDATE_CONTEXT},
             "agent": {"kind": kind, "name": kind}}, sort_keys=False))
+        cfg = load_config(exp_dir / "config.yaml")
+        # Always a fresh run: stale results must not satisfy the check.
+        for name in ("run_id", "results.jsonl"):
+            (exp_dir / name).unlink(missing_ok=True)
         _run(cfg, exp_dir)
         bad += _offenders(cfg, exp_dir, expected)
     for line in bad:

@@ -38,9 +38,24 @@ class InfraError(Exception):
     """Host not in the expected state (maps to infra_error)."""
 
 
+class HostDirtyError(Exception):
+    """Stray processes survived the cleanup kill: stop the experiment (not an attempt record)."""
+
+
+def _strays(remote: Remote) -> list[str]:
+    return remote.run(PREFLIGHT_CMD, check=False).stdout.split()
+
+
+def _kill_strays(remote: Remote) -> None:
+    try:
+        remote.run("pkill -KILL" + PREFLIGHT_CMD.removeprefix("pgrep"), check=False)
+    except RemoteError:
+        pass  # host unreachable; the runtime restart / retry records it
+
+
 def preflight(remote: Remote, runtime: Runtime) -> None:
     """Fail unless nothing else is running and only the model under test is loaded."""
-    stray = remote.run(PREFLIGHT_CMD, check=False).stdout.split()
+    stray = _strays(remote)
     if stray:
         raise InfraError(f"stray processes on host: {' '.join(stray)}")
     loaded = runtime.loaded_models(remote)
@@ -127,17 +142,17 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
     paths = attempt_paths(run_id, task, repeat)
     branch = f"exp/{run_id}/{task}-r{repeat}"
     started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(clock.time()))
-    versions: dict[str, str] = {}
+    # Pinned on every record, infra_error included; runtime fields are added when available.
+    versions: dict[str, str] = {
+        "agent": f"{cfg.agent.name} {cfg.agent.version}".strip(),
+        "harness": harness_sha if harness_sha is not None else harness_version(),
+        "task_set": cfg.task_set,
+        "sampling": json.dumps(cfg.sampling, sort_keys=True),
+    }
     result: AgentResult | None = None
     try:
         preflight(remote, runtime)
-        versions = {
-            **runtime.versions(remote),
-            "agent": f"{cfg.agent.name} {cfg.agent.version}".strip(),
-            "harness": harness_sha if harness_sha is not None else harness_version(),
-            "task_set": cfg.task_set,
-            "sampling": json.dumps(cfg.sampling, sort_keys=True),
-        }
+        versions = {**runtime.versions(remote), **versions}
         bench.prepare_workdir(paths, cfg.task_set, task, branch)
         bench.export_task_files(cfg.task_set, task, paths.task_files)
 
@@ -153,7 +168,10 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
                 remote, f"bash {scripts}/sample.sh {shlex.quote(paths.samples_csv)} "
                         f"{SAMPLE_INTERVAL_S}",
                 f"{paths.root}/sample.log"))
-            ready = remote.run(f"for i in $(seq 50); do curl -s -o /dev/null {ENDPOINT}/ "
+            # TCP connect only: an HTTP probe would add a row to usage.jsonl.
+            host, port = PROXY_LISTEN.split(":")
+            probe = shlex.quote(f"</dev/tcp/{host}/{port}")
+            ready = remote.run(f"for i in $(seq 50); do bash -c {probe} 2>/dev/null "
                                f"&& exit 0; sleep 0.1; done; exit 1", check=False)
             if ready.returncode != 0:
                 raise InfraError("usage proxy did not start listening")
@@ -236,7 +254,8 @@ def run_experiment(cfg: ExperimentConfig, exp_dir: Path, *, remote: Remote, benc
                 if rec.status != "infra_error":
                     break
                 infra_count += 1
-                # Restart the runtime after any infra_error so the next attempt starts clean.
+                # Clear survivors and restart the runtime so the next attempt starts clean.
+                _kill_strays(remote)
                 try:
                     runtime.start(remote)
                 except (InfraError, *INFRA_EXCEPTIONS) as e:
@@ -249,5 +268,15 @@ def run_experiment(cfg: ExperimentConfig, exp_dir: Path, *, remote: Remote, benc
                     break
                 if infra_count >= 2:
                     break
+                # A host the kill could not clean would fail every remaining attempt (and mark
+                # them done): stop so a later resume reruns them.
+                try:
+                    stray = _strays(remote)
+                except RemoteError:
+                    stray = []  # the retry itself records the unreachable host
+                if stray:
+                    raise HostDirtyError(
+                        f"stray processes survived pkill before retrying {task} r{repeat}: "
+                        f"{' '.join(stray)}")
     finally:
         runtime.stop(remote)

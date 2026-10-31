@@ -52,3 +52,24 @@ def test_validate_reports_offenders(tmp_path, monkeypatch, capsys):
     assert cli.main(["validate", "--task-set", "v1", "--experiments-dir", str(tmp_path)]) == 1
     out = capsys.readouterr().out
     assert f"null: {ALL[2]} r1: pass" in out and f"oracle: {ALL[0]} r1: no result" in out
+
+
+def test_validate_starts_fresh_and_loads_config(tmp_path, monkeypatch, capsys):
+    stale = tmp_path / "validate-v1-oracle"
+    stale.mkdir()
+    (stale / "run_id").write_text("validate-v1-oracle-202601010000\n")
+    for task in ALL:
+        append_record(stale / "results.jsonl", replace(r("pass", 60), task=task))
+    seen = []
+
+    def run_experiment(cfg, exp_dir, *, remote, bench, **kw):
+        assert not (exp_dir / "results.jsonl").exists() and not (exp_dir / "run_id").exists()
+        seen.append(cfg)
+        if cfg.agent.kind == "null":
+            for task in ALL:
+                append_record(exp_dir / "results.jsonl", replace(r("fail", 60), task=task))
+    monkeypatch.setattr(cli, "run_experiment", run_experiment)
+    assert cli.main(["validate", "--task-set", "v1", "--experiments-dir", str(tmp_path)]) == 1
+    assert f"oracle: {ALL[0]} r1: no result" in capsys.readouterr().out
+    assert seen[1] == cli.load_config(stale / "config.yaml")
+    assert seen[1].runtime.model == cli.VALIDATE_MODEL and seen[1].agent.kind == "oracle"
