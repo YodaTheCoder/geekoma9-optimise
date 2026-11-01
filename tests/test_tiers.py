@@ -36,3 +36,9 @@ def test_unknown_task_set_raises():
 
 def test_probe_tier():
     assert tier_plan(cfg(tier="probe")) == [("004-weapon-cooldown", 1)]
+
+
+def test_screening3_is_six_by_three():
+    plan = tier_plan(cfg(tier="screening3"))
+    assert len(plan) == 18 and {r for _, r in plan} == {1, 2, 3}
+    assert [t for t, _ in plan[::3]] == [t for t, _ in tier_plan(cfg(tier="screening"))]

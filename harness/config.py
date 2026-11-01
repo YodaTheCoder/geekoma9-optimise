@@ -50,7 +50,7 @@ class ExperimentConfig:
     host: HostExpect | None = None
 
 
-_TIERS = ("probe", "screening", "finalists", "all")
+_TIERS = ("probe", "screening", "screening3", "finalists", "all")
 # ids and run_ids become branch names and path parts.
 _SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 

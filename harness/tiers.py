@@ -22,6 +22,7 @@ TASK_SETS: dict[str, dict[str, list[str]]] = {
 _TIERS = {
     "probe": ("probe", 1),
     "screening": ("screening", 1),
+    "screening3": ("screening", 3),
     "finalists": ("all", 3),
     "all": ("all", 1),
 }
