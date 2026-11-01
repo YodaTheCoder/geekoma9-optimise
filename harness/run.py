@@ -17,6 +17,7 @@ from harness.agents import make_agent
 from harness.agents.base import Agent, AgentResult
 from harness.bench import BenchRepo
 from harness.config import ConfigError, ExperimentConfig, check_safe_id
+from harness.host import check_host, host_versions, read_host_memory
 from harness.paths import AGENT_USER, GODOT_BIN, ROOT, RUNS, AttemptPaths, attempt_paths
 from harness.provision import SCRIPTS_SRC, sync_scripts
 from harness.remote import Remote, RemoteError
@@ -68,8 +69,10 @@ class RunLockedError(Exception):
 
 def config_hash(cfg: ExperimentConfig) -> str:
     """sha256 of the loaded config's canonical JSON."""
-    return hashlib.sha256(json.dumps(asdict(cfg), sort_keys=True, separators=(",", ":"))
-                          .encode()).hexdigest()
+    d = asdict(cfg)
+    if d["host"] is None:
+        del d["host"]  # configs without a host section keep the hash they had before it existed
+    return hashlib.sha256(json.dumps(d, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def scripts_hash(src: Path = SCRIPTS_SRC) -> str:
@@ -306,7 +309,8 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
     result: AgentResult | None = None
     try:
         preflight(remote, runtime)
-        versions = {**runtime.versions(remote), **versions}
+        versions = {**runtime.versions(remote), **host_versions(read_host_memory(remote)),
+                    **versions}
         remote.run(CLOSE_OLD_ATTEMPTS)  # again per attempt: a failed close must not stay open
         bench.prepare_workdir(paths, cfg.task_set, task, branch)
         try:
@@ -441,6 +445,7 @@ def _run_loop(cfg: ExperimentConfig, results: Path, run_id: str, todo: list[tupl
     try:
         was_active = remote.run(SYSTEM_OLLAMA_ACTIVE, check=False).stdout.strip() == "active"
         remote.run(SYSTEM_OLLAMA_STOP)
+        check_host(cfg.host, read_host_memory(remote))
         runtime.start(remote)
         for i, (task, repeat) in enumerate(todo):
             if i and cfg.cooldown_s > 0:

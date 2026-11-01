@@ -32,3 +32,7 @@ def test_all_is_twelve_by_one():
 def test_unknown_task_set_raises():
     with pytest.raises(ConfigError):
         tier_plan(cfg(task_set="v9"))
+
+
+def test_probe_tier():
+    assert tier_plan(cfg(tier="probe")) == [("004-weapon-cooldown", 1)]

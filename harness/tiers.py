@@ -10,6 +10,7 @@ TASK_SETS: dict[str, dict[str, list[str]]] = {
             "007-patrol-enemy", "008-hud-health", "009-event-bus",
             "010-wave-spawner", "011-status-effects", "012-weapon-tests",
         ],
+        "probe": ["004-weapon-cooldown"],
         "screening": [
             "001-health-clamp", "004-weapon-cooldown", "005-inventory-pickup",
             "007-patrol-enemy", "009-event-bus", "011-status-effects",
@@ -19,6 +20,7 @@ TASK_SETS: dict[str, dict[str, list[str]]] = {
 
 # tier -> (task subset key, repeats)
 _TIERS = {
+    "probe": ("probe", 1),
     "screening": ("screening", 1),
     "finalists": ("all", 3),
     "all": ("all", 1),

@@ -8,7 +8,8 @@ import pytest
 
 from conftest import FakeRemote
 from harness.agents.base import AgentResult
-from harness.config import AgentConfig, ExperimentConfig, RuntimeConfig
+from harness.config import AgentConfig, ExperimentConfig, HostExpect, RuntimeConfig
+from harness.host import HostMismatchError
 from harness.paths import ROOT
 from harness.run import CLOSE_OLD_ATTEMPTS
 from harness.remote import RemoteError
@@ -43,6 +44,8 @@ class BenchRemote(FakeRemote):
         self.reply("sample.sh", stdout="222\n")
         self.reply("run.lock", stdout="333\n")
         self.reply("systemctl is-active ollama", stdout="active\n")
+        self.reply("mem_info_vram_total", stdout="25769803776\n3970646016\n"
+                   "MemTotal:        7755172 kB\nSwapTotal:       8388604 kB\n969396\n")
 
     def read_text(self, path):
         d = path.rsplit("/", 1)[0]
@@ -172,7 +175,9 @@ def test_pass_record_fields():
     assert rec.peak_mem_mib == 1000 and rec.peak_gpu_mem_mib == 500 and not rec.throttled
     assert rec.versions == {"runtime": "ollama 0.34.4", "model_digest": "sha256:d",
                             "agent": "aider 0.9", "harness": "deadbee", "task_set": "v1",
-                            "sampling": "{}", "config": config_hash(CFG)}
+                            "sampling": "{}", "config": config_hash(CFG),
+                            "host_vram_mib": "24576", "host_gtt_mib": "3786",
+                            "host_mem_total_mib": "7573", "host_ttm_pages_limit": "969396"}
     assert rec.started_at == "2027-01-15T08:00:00Z"
     # helpers started detached, stopped by process group, score.sh run with the godot binary
     proxy = next(c for c in remote.calls if "usage_proxy.py" in c)
@@ -751,3 +756,20 @@ def test_second_run_fails_fast(tmp_path):
     with pytest.raises(RunLockedError, match="another harness run"):
         experiment(tmp_path, remote, FakeAgent())
     assert not any("ollama" in c for c in remote.calls) and remote.synced == []
+
+
+# ---------------------------------------------------------------- host memory layout
+
+def test_run_experiment_host_mismatch_runs_nothing(tmp_path):
+    remote = BenchRemote()
+    cfg = replace(CFG, host=HostExpect(vram_gib=16, gtt_gib=7.7))
+    with pytest.raises(HostMismatchError):
+        experiment(tmp_path, remote, FakeAgent(), cfg=cfg)
+    assert read_records(tmp_path / "results.jsonl") == []
+    assert not any("usage_proxy" in c for c in remote.calls)
+    assert remote.calls[-2] == "sudo -n systemctl start ollama"
+
+
+def test_attempt_record_pins_host():
+    rec = attempt(BenchRemote())
+    assert rec.versions["host_vram_mib"] == "24576"

@@ -31,19 +31,26 @@ class AgentConfig:
 
 
 @dataclass(frozen=True)
+class HostExpect:
+    vram_gib: float
+    gtt_gib: float
+
+
+@dataclass(frozen=True)
 class ExperimentConfig:
     id: str
     task_set: str
-    tier: Literal["screening", "finalists", "all"]
+    tier: Literal["probe", "screening", "finalists", "all"]
     runtime: RuntimeConfig
     agent: AgentConfig
     timeout_s: int = 2700
     cooldown_s: int = 120
     sampling: dict[str, float] = field(default_factory=dict)
     notes: str = ""
+    host: HostExpect | None = None
 
 
-_TIERS = ("screening", "finalists", "all")
+_TIERS = ("probe", "screening", "finalists", "all")
 # ids and run_ids become branch names and path parts.
 _SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 
@@ -71,7 +78,8 @@ def _require(data: dict, key: str, typ: type, prefix: str = "") -> Any:
 def _typed(data: dict, key: str, typ: type, prefix: str = "") -> Any:
     value = data[key]
     if isinstance(value, bool) or not isinstance(value, typ):
-        raise ConfigError(f"{prefix}{key}: expected {typ.__name__}")
+        names = typ if isinstance(typ, tuple) else (typ,)
+        raise ConfigError(f"{prefix}{key}: expected {' or '.join(t.__name__ for t in names)}")
     return value
 
 
@@ -129,6 +137,17 @@ def _agent(raw: Any) -> AgentConfig:
     )
 
 
+def _host(raw: Any) -> HostExpect:
+    d = _mapping(raw, "host")
+    _unknown(d, {"vram_gib", "gtt_gib"}, "host.")
+    vals = []
+    for key in ("vram_gib", "gtt_gib"):
+        if key not in d:
+            raise ConfigError(f"host.{key}: missing")
+        vals.append(float(_typed(d, key, (int, float), "host.")))
+    return HostExpect(*vals)
+
+
 def load_config(path: Path) -> ExperimentConfig:
     try:
         data = yaml.safe_load(Path(path).read_text())
@@ -136,7 +155,7 @@ def load_config(path: Path) -> ExperimentConfig:
         raise ConfigError(f"{path}: {e}") from e
     d = _mapping(data, "config")
     _unknown(d, {"id", "task_set", "tier", "runtime", "agent", "timeout_s",
-                 "cooldown_s", "sampling", "notes"}, "")
+                 "cooldown_s", "sampling", "notes", "host"}, "")
     tier = _require(d, "tier", str)
     if tier not in _TIERS:
         raise ConfigError(f"tier: must be one of {list(_TIERS)}, got {tier!r}")
@@ -157,4 +176,5 @@ def load_config(path: Path) -> ExperimentConfig:
         cooldown_s=_typed(d, "cooldown_s", int) if "cooldown_s" in d else 120,
         sampling={k: float(v) for k, v in sampling.items()},
         notes=_typed(d, "notes", str) if "notes" in d else "",
+        host=_host(d["host"]) if "host" in d else None,
     )

@@ -1,7 +1,7 @@
 import pytest
 import yaml
 
-from harness.config import ConfigError, load_config
+from harness.config import ConfigError, HostExpect, load_config
 
 MINIMAL = """id: e0-baseline
 task_set: v1
@@ -56,3 +56,16 @@ def test_id_must_be_ref_safe(tmp_path, bad):
 
 def test_ref_safe_id_accepted(tmp_path):
     assert _load(tmp_path, id="e1-split.16g_x").id == "e1-split.16g_x"
+
+
+def test_host_section_parsed(tmp_path):
+    assert _load(tmp_path, host={"vram_gib": 16, "gtt_gib": 7.7}).host == HostExpect(16.0, 7.7)
+
+
+def test_host_section_unknown_key(tmp_path):
+    with pytest.raises(ConfigError, match="host.vram: unknown key"):
+        _load(tmp_path, host={"vram": 16})
+
+
+def test_host_absent_is_none(tmp_path):
+    assert _load(tmp_path).host is None
