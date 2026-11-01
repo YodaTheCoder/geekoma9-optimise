@@ -38,6 +38,7 @@ class AttemptRecord:
     versions: dict[str, str]
     started_at: str
     error: str = ""
+    gpu_offload: float | None = None
 
 
 def drop_partial_tail(path: Path) -> None:

@@ -153,3 +153,36 @@ def test_versions_model_not_found():
                     ("/api/tags", json.dumps({"models": []}))])
     with pytest.raises(RuntimeStartError):
         OllamaRuntime(cfg()).versions(r)
+
+
+def _ps_runtime(models):
+    r = FakeRemote([("/api/ps", json.dumps({"models": models}))])
+    return OllamaRuntime(RuntimeConfig(kind="ollama", model="qwen3-coder:30b", context=65536,
+                                       env={})), r
+
+
+def test_gpu_offload_full():
+    rt, r = _ps_runtime([{"name": "qwen3-coder:30b", "size": 100, "size_vram": 100}])
+    assert rt.gpu_offload(r) == 1.0
+
+
+def test_gpu_offload_partial():
+    rt, r = _ps_runtime([{"name": "other:1b", "size": 10, "size_vram": 10},
+                         {"name": "qwen3-coder:30b", "size": 200, "size_vram": 150}])
+    assert rt.gpu_offload(r) == 0.75
+
+
+def test_gpu_offload_rounds_to_three_places():
+    rt, r = _ps_runtime([{"name": "qwen3-coder:30b", "size": 3, "size_vram": 2}])
+    assert rt.gpu_offload(r) == 0.667
+
+
+@pytest.mark.parametrize("models", [
+    [{"name": "qwen3-coder:30b", "size": 0, "size_vram": 0}],
+    [{"name": "qwen3-coder:30b", "size": 100}],
+    [{"name": "other:1b", "size": 100, "size_vram": 100}],
+    [],
+])
+def test_gpu_offload_missing_fields(models):
+    rt, r = _ps_runtime(models)
+    assert rt.gpu_offload(r) is None

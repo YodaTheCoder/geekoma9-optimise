@@ -71,6 +71,7 @@ class FakeRuntime:
 
     def __init__(self):
         self.loaded = ["m:latest"]
+        self.offload: float | None = None
         self.starts = self.stops = 0
         self.start_error: Exception | None = None
 
@@ -87,6 +88,9 @@ class FakeRuntime:
 
     def loaded_models(self, remote):
         return list(self.loaded)
+
+    def gpu_offload(self, remote):
+        return self.offload
 
 
 class FakeAgent:
@@ -187,6 +191,28 @@ def test_pass_record_fields():
     assert "kill -TERM -- -111" in remote.calls and "kill -TERM -- -222" in remote.calls
     score = next(c for c in remote.calls if "score.sh" in c)
     assert "/srv/agentbench/opt/godot/godot" in score and "abc123" in score and "/m.git" in score
+
+
+def test_attempt_records_gpu_offload():
+    rt = FakeRuntime()
+    rt.offload = 0.9
+    assert attempt(BenchRemote(), runtime=rt).gpu_offload == 0.9
+
+
+def test_gpu_offload_failure_is_not_an_infra_error():
+    class Bad(FakeRuntime):
+        def gpu_offload(self, remote):
+            raise ValueError("bad /api/ps")
+    rec = attempt(BenchRemote(), runtime=Bad())
+    assert rec.status == "pass" and rec.gpu_offload is None
+
+
+def test_gpu_offload_keyboard_interrupt_propagates():
+    class Stop(FakeRuntime):
+        def gpu_offload(self, remote):
+            raise KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        attempt(BenchRemote(), runtime=Stop())
 
 
 def test_upstream_error_becomes_infra_error():

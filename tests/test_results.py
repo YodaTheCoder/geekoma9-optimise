@@ -5,6 +5,12 @@ import pytest
 from harness.results import AttemptRecord, append_record, pending, read_records
 
 
+# a real line from experiments/e0-baseline/results.jsonl, before gpu_offload existed
+OLD_LINE = (
+    '{"experiment": "e0-baseline", "run_id": "e0-baseline-202610311713", "task": "001-health-clamp", "repeat": 1, "status": "fail", "hidden_passed": 0, "hidden_total": 5, "regressions_ok": false, "parse_ok": false, "wall_s": 86.77581488294527, "prompt_tokens": 150277, "gen_tokens": 1189, "pp_tps": 4065.2291316867295, "tg_tps": 24.75425262549662, "peak_mem_mib": 4038, "peak_gpu_mem_mib": 23666, "steps": 11, "throttled": false, "upstream_errors": 0, "pushed": true, "branch": "exp/e0-baseline-202610311713/001-health-clamp-r1", "versions": {"runtime": "ollama 0.34.4", "model_digest": "06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca", "agent": "opencode 1.18.32", "harness": "0fd61c1", "task_set": "v1", "sampling": "{}"}, "started_at": "2026-10-31T17:13:11Z", "error": ""}'
+)
+
+
 def rec(task: str, repeat: int, status: str = "pass") -> AttemptRecord:
     return AttemptRecord(
         experiment="e0", run_id="r1", task=task, repeat=repeat, status=status,
@@ -68,12 +74,12 @@ def test_unknown_keys_ignored_and_logged_once(tmp_path: Path, capsys):
     import json
     from dataclasses import asdict
     p = tmp_path / "results.jsonl"
-    rows = [{**asdict(rec("001", 1)), "gpu_offload": 0.9, "peak_swap_mib": 3},
-            {**asdict(rec("002", 1)), "gpu_offload": 1.0}]
+    rows = [{**asdict(rec("001", 1)), "zz_future_a": 0.9, "zz_future_b": 3},
+            {**asdict(rec("002", 1)), "zz_future_a": 1.0}]
     p.write_text("".join(json.dumps(r) + "\n" for r in rows))
     assert [r.task for r in read_records(p)] == ["001", "002"]
     err = capsys.readouterr().err
-    assert err.count("ignoring unknown") == 1 and "gpu_offload" in err and "peak_swap_mib" in err
+    assert err.count("ignoring unknown") == 1 and "zz_future_a" in err and "zz_future_b" in err
 
 
 def test_missing_required_key_still_raises(tmp_path: Path):
@@ -85,3 +91,10 @@ def test_missing_required_key_still_raises(tmp_path: Path):
     p.write_text(json.dumps(row) + "\n" + json.dumps(asdict(rec("002", 1))) + "\n")
     with pytest.raises(ValueError, match="line 1"):
         read_records(p)
+
+
+def test_read_records_old_lines_default_new_fields(tmp_path: Path):
+    p = tmp_path / "results.jsonl"
+    p.write_text(OLD_LINE + "\n")
+    [r] = read_records(p)
+    assert r.task == "001-health-clamp" and r.gpu_offload is None

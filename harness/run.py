@@ -307,8 +307,13 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
     if scripts_sha is not None:
         versions["remote_scripts"] = scripts_sha
     result: AgentResult | None = None
+    gpu_offload: float | None = None
     try:
         preflight(remote, runtime)
+        try:  # the model is loaded and warm now; a failed read is a gap in the data, not infra
+            gpu_offload = runtime.gpu_offload(remote)
+        except Exception:
+            gpu_offload = None
         versions = {**runtime.versions(remote), **host_versions(read_host_memory(remote)),
                     **versions}
         remote.run(CLOSE_OLD_ATTEMPTS)  # again per attempt: a failed close must not stay open
@@ -369,7 +374,8 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
         samples = summarize_samples(_read_optional(remote, paths.samples_csv))
     except (InfraError, *INFRA_EXCEPTIONS) as e:
         return _record(cfg, run_id, task, repeat, branch, started_at, versions=versions,
-                       wall_s=result.wall_s if result else 0.0, error=_short_error(e))
+                       wall_s=result.wall_s if result else 0.0, error=_short_error(e),
+                       gpu_offload=gpu_offload)
 
     status = decide_status(parse_ok=parse_ok, hidden=hidden, regression=regression,
                            regression_expected=regression_expected,
@@ -391,7 +397,7 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
         pp_tps=usage.pp_tps, tg_tps=usage.tg_tps,
         peak_mem_mib=samples.peak_mem_mib, peak_gpu_mem_mib=samples.peak_gpu_mem_mib,
         steps=result.steps, throttled=samples.throttled, upstream_errors=usage.upstream_errors,
-        pushed=pushed, versions=versions, error=error)
+        pushed=pushed, versions=versions, error=error, gpu_offload=gpu_offload)
 
 
 def _run_id(cfg: ExperimentConfig, exp_dir: Path, clock) -> str:

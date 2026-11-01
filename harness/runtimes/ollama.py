@@ -105,3 +105,12 @@ class OllamaRuntime:
 
     def loaded_models(self, remote: Remote) -> list[str]:
         return [m["name"] for m in self._get(remote, "/api/ps").get("models", [])]
+
+    def gpu_offload(self, remote: Remote) -> float | None:
+        for m in self._get(remote, "/api/ps").get("models", []):
+            if m.get("name") == self.model:
+                size, vram = m.get("size"), m.get("size_vram")
+                if not size or vram is None:
+                    return None
+                return round(vram / size, 3)
+        return None

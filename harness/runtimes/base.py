@@ -21,3 +21,6 @@ class Runtime(Protocol):
     def versions(self, remote: Remote) -> dict[str, str]: ...
 
     def loaded_models(self, remote: Remote) -> list[str]: ...
+
+    def gpu_offload(self, remote: Remote) -> float | None:
+        """Fraction of the loaded model held in GPU memory; None when unknown or not applicable."""
