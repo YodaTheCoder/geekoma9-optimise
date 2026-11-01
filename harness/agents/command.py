@@ -6,18 +6,17 @@ import time
 
 from harness.agents.base import AgentResult
 from harness.config import AgentConfig, ConfigError
-from harness.paths import AGENT_USER, OWNER, AttemptPaths
+from harness.paths import AGENT_HOME_TEMPLATE, AGENT_USER, OWNER, AttemptPaths
 from harness.remote import Remote, RemoteError
 
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Run as the agent user before each attempt: nothing an earlier attempt left (OpenCode sessions
-# and snapshots, Claude Code transcripts, caches, temp files) may reach the next one. Kept: the
-# harness's agent config and Claude Code's install and login.
+# and snapshots, Claude Code transcripts, caches, temp files) may reach the next one. The home is
+# rebuilt from AGENT_HOME_TEMPLATE; only Claude Code's install and login are kept.
 AGENT_HOME_RESET = (
     "cd ~ && "
-    "find . -mindepth 1 -maxdepth 1 ! -name .config ! -name .claude ! -name .claude.json "
-    "! -name .local -exec rm -rf {} + && "
-    "{ [ ! -d .config ] || find .config -mindepth 1 -maxdepth 1 ! -name agentbench -exec rm -rf {} +; } && "
+    "find . -mindepth 1 -maxdepth 1 ! -name .claude ! -name .claude.json ! -name .local "
+    "-exec rm -rf {} + && "
     "{ [ ! -d .claude ] || find .claude -mindepth 1 -maxdepth 1 ! -name .credentials.json "
     "-exec rm -rf {} +; } && "
     "{ [ ! -d .local ] || find .local -mindepth 1 -maxdepth 1 ! -name bin ! -name share "
@@ -26,6 +25,7 @@ AGENT_HOME_RESET = (
     "-exec rm -rf {} +; } && "
     "{ [ ! -d .local/share ] || find .local/share -mindepth 1 -maxdepth 1 ! -name claude "
     "-exec rm -rf {} +; } && "
+    f"cp -r --preserve=mode,timestamps {AGENT_HOME_TEMPLATE}/. ~/ && "
     f"find /tmp /var/tmp /dev/shm -mindepth 1 -maxdepth 1 -user {AGENT_USER} -exec rm -rf {{}} +")
 
 

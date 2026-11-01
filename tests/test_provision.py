@@ -22,6 +22,8 @@ class ProvRemote(FakeRemote):
         self.reply("sudo -n -l -U agentrun", stdout="User agentrun is not allowed to run sudo on geekoma9.\n")
         self.reply("ls -d /srv/agentbench/runs/*/*/work",
                    stdout="/srv/agentbench/runs/e0-1/001-a-r1/work\n")
+        self.reply("test -r /srv/agentbench/agent-home/", returncode=0)  # reads the home template
+        self.reply("test -w", returncode=1)  # ... but cannot change it
         self.reply("test -x /home/markn", returncode=1)  # agentrun cannot enter markn's home
         self.reply("test -r", returncode=1)  # agentrun can read neither the mirror nor attempts
 
@@ -137,6 +139,20 @@ def test_agent_user_can_read_other_attempt_fails():
     failing(remote, "test -r /srv/agentbench/runs/", rc=0, stdout="")
     c = pv.check_agent_user(remote)
     assert not c.ok and "001-a-r1" in c.detail
+
+
+def test_agent_user_without_home_template_fails():
+    remote = ProvRemote()
+    failing(remote, "test -r /srv/agentbench/agent-home/", rc=1, stdout="")
+    c = pv.check_agent_user(remote)
+    assert not c.ok and "template" in c.detail
+
+
+def test_agent_user_can_write_home_template_fails():
+    remote = ProvRemote()
+    failing(remote, "test -w /srv/agentbench/agent-home", rc=0, stdout="")
+    c = pv.check_agent_user(remote)
+    assert not c.ok and "agent-home" in c.detail
 
 
 def test_agent_user_can_enter_owner_home_fails():

@@ -6,7 +6,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from harness.paths import AGENT_USER, GODOT_BIN, MIRROR, OWNER_HOME, ROOT, RUNS
+from harness.paths import (AGENT_HOME_TEMPLATE, AGENT_USER, GODOT_BIN, MIRROR, OWNER_HOME,
+                           ROOT, RUNS)
 from harness.remote import Remote, RemoteError
 
 SCRIPTS_SRC = Path(__file__).resolve().parent / "remote_scripts"
@@ -105,6 +106,13 @@ def check_agent_user(remote: Remote) -> Check:
     ok, _ = _sh(remote, f"sudo -n -u {u} test -x {shlex.quote(GODOT_BIN)}")
     if not ok:
         return Check(name, False, f"{AGENT_USER} cannot run {GODOT_BIN}")
+    template = f"{AGENT_HOME_TEMPLATE}/.config/agentbench/opencode.json"
+    ok, _ = _sh(remote, f"sudo -n -u {u} test -r {shlex.quote(template)}")
+    if not ok:
+        return Check(name, False, f"{AGENT_USER} cannot read the home template {template}")
+    writable, _ = _sh(remote, f"sudo -n -u {u} test -w {shlex.quote(AGENT_HOME_TEMPLATE)}")
+    if writable:
+        return Check(name, False, f"{AGENT_USER} can write {AGENT_HOME_TEMPLATE}")
     entered, _ = _sh(remote, f"sudo -n -u {u} test -x {shlex.quote(OWNER_HOME)}")
     if entered:
         return Check(name, False, f"{AGENT_USER} can enter {OWNER_HOME} (chmod 750 it)")

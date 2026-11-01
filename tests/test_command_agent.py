@@ -182,7 +182,7 @@ def test_command_agent_resets_agent_home_before_run(fake_remote):
     CommandAgent(cfg()).run(fake_remote, PATHS, "e", "m", 5)
     calls = fake_remote.calls
     i_reset = next(i for i, c in enumerate(calls) if "sudo -n -u agentrun -H bash -c" in c
-                   and "! -name .config" in c)
+                   and "/srv/agentbench/agent-home/. ~/" in c)
     assert i_reset < calls.index(_agent_call(fake_remote))
     reset = calls[i_reset]
     assert "/tmp /var/tmp /dev/shm" in reset and "-user agentrun" in reset
@@ -193,7 +193,7 @@ def test_command_agent_reset_failure_stops_attempt(fake_remote):
     run = fake_remote.run
 
     def failing_reset(cmd, timeout=None, check=True):
-        if "! -name .config" in cmd and check:
+        if "agent-home" in cmd and check:
             raise RemoteError("rm: cannot remove")
         return run(cmd, timeout=timeout, check=check)
     fake_remote.run = failing_reset

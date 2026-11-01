@@ -11,6 +11,9 @@ OWNER_HOME = f"/home/{OWNER}"
 AGENT_ROOT = "/srv/agentbench"
 RUNS = f"{AGENT_ROOT}/runs"
 GODOT_BIN = f"{AGENT_ROOT}/opt/godot/godot"
+# The agent user's home is rebuilt from this owner-held, read-only copy before every attempt:
+# agent configs plus warmed tool caches (OpenCode's plugin packages), nothing from an attempt.
+AGENT_HOME_TEMPLATE = f"{AGENT_ROOT}/agent-home"
 # Command agents run as this unprivileged user, so they cannot read the mirror (hidden tests,
 # solutions), other attempts, or the scoring files (docs/provisioning.md).
 AGENT_USER = "agentrun"

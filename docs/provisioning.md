@@ -90,10 +90,11 @@ does the per-attempt part itself:
   At run start every older attempt root is made `0700` and every run folder `0711`.
 - Preflight fails if any `agentrun` process exists; the stray kill also kills them.
 - Before each agent run, agentrun's home is reset as that user: everything goes except
-  `~/.config/agentbench`, `~/.claude/.credentials.json`, `~/.claude.json`, `~/.local/bin/claude` and
-  `~/.local/share/claude` (Claude Code's install and login), and agentrun's entries in `/tmp`,
-  `/var/tmp` and `/dev/shm` are deleted. So no attempt, not even a repeat of the same task, sees an
-  earlier one's OpenCode sessions, Claude Code transcripts, caches or scratch files.
+  `~/.claude/.credentials.json`, `~/.claude.json`, `~/.local/bin/claude` and `~/.local/share/claude`
+  (Claude Code's install and login), then the template `/srv/agentbench/agent-home/` is copied in, and
+  agentrun's entries in `/tmp`, `/var/tmp` and `/dev/shm` are deleted. So no attempt, not even a
+  repeat of the same task, sees an earlier one's OpenCode sessions, Claude Code transcripts, caches or
+  scratch files, and every attempt starts with the same warm tool caches.
 - The run-start sweep that closes old attempt roots runs again before every attempt.
 - The oracle applies `solution.patch` straight from the mirror; null and oracle run as markn.
 
@@ -118,6 +119,22 @@ sudo install -o agentrun -g agentrun -m 600 /home/markn/.config/agentbench/openc
     /home/agentrun/.config/agentbench/opencode.json
 echo agentrun | sudo tee -a /etc/cron.deny /etc/at.deny             # no jobs that outlive the attempt
 ```
+
+Home template (with no harness run in progress: the harness kills every agentrun process). Warm
+OpenCode once as agentrun so it installs its plugin packages (`~/.config/opencode/node_modules`) and
+fetches its model list (`~/.cache/opencode/models.json`); the run itself may fail, the endpoint is
+unused. Then keep only config and caches (not `~/.local/share/opencode`, its session store):
+
+```
+sudo -u agentrun -H bash -c 'd=$(mktemp -d) && git -C "$d" init -q && cd "$d" &&
+  OPENCODE_CONFIG=$HOME/.config/agentbench/opencode.json BENCH_ENDPOINT=http://127.0.0.1:1 \
+  timeout 300 opencode run --auto --format json --dir "$d" -m bench/qwen3-coder:30b hi < /dev/null'
+sudo install -d -o markn -g markn -m 755 /srv/agentbench/agent-home
+sudo cp -r /home/agentrun/.config /home/agentrun/.cache /srv/agentbench/agent-home/
+sudo chown -R markn: /srv/agentbench/agent-home && chmod -R u=rwX,go=rX /srv/agentbench/agent-home
+```
+
+Rebuild it the same way after changing `opencode.json` or upgrading OpenCode.
 
 Then `uv run harness provision` must show `OK   agent-user`. Things to confirm on the live host:
 `sudo -n -l -U agentrun` prints "is not allowed to run sudo"; `sudo -n -u agentrun -H opencode --version`
