@@ -14,16 +14,16 @@
 
 | task | repeat | status | hidden | wall min | tg tok/s | throttled | branch |
 |---|---|---|---|---|---|---|---|
-| 001-health-clamp | 1 | fail | 1/5 | 0.0 | - | no | exp/validate-v1-null-202610311353/001-health-clamp-r1 |
-| 002-damage-signal | 1 | fail | 0/7 | 0.0 | - | no | exp/validate-v1-null-202610311353/002-damage-signal-r1 |
-| 003-score-combo | 1 | fail | 0/0 | 0.0 | - | no | exp/validate-v1-null-202610311353/003-score-combo-r1 |
-| 004-weapon-cooldown | 1 | fail | 0/5 | 0.0 | - | no | exp/validate-v1-null-202610311353/004-weapon-cooldown-r1 |
-| 005-inventory-pickup | 1 | fail | 0/0 | 0.0 | - | no | exp/validate-v1-null-202610311353/005-inventory-pickup-r1 |
-| 006-save-load | 1 | fail | 0/0 | 0.0 | - | no | exp/validate-v1-null-202610311353/006-save-load-r1 |
-| 007-patrol-enemy | 1 | fail | 0/0 | 0.0 | - | no | exp/validate-v1-null-202610311353/007-patrol-enemy-r1 |
-| 008-hud-health | 1 | fail | 0/6 | 0.0 | - | no | exp/validate-v1-null-202610311353/008-hud-health-r1 |
-| 009-event-bus | 1 | fail | 0/6 | 0.0 | - | no | exp/validate-v1-null-202610311353/009-event-bus-r1 |
-| 010-wave-spawner | 1 | fail | 0/0 | 0.0 | - | no | exp/validate-v1-null-202610311353/010-wave-spawner-r1 |
-| 011-status-effects | 1 | fail | 0/0 | 0.0 | - | no | exp/validate-v1-null-202610311353/011-status-effects-r1 |
-| 012-weapon-tests | 1 | fail | 0/11 | 0.0 | - | no | exp/validate-v1-null-202610311353/012-weapon-tests-r1 |
+| 001-health-clamp | 1 | fail | 1/5 | 0.0 | - | no | exp/validate-v1-null-20261101072237/001-health-clamp-r1 |
+| 002-damage-signal | 1 | fail | 0/7 | 0.0 | - | no | exp/validate-v1-null-20261101072237/002-damage-signal-r1 |
+| 003-score-combo | 1 | fail | 0/0 | 0.0 | - | no | exp/validate-v1-null-20261101072237/003-score-combo-r1 |
+| 004-weapon-cooldown | 1 | fail | 0/5 | 0.0 | - | no | exp/validate-v1-null-20261101072237/004-weapon-cooldown-r1 |
+| 005-inventory-pickup | 1 | fail | 0/0 | 0.0 | - | no | exp/validate-v1-null-20261101072237/005-inventory-pickup-r1 |
+| 006-save-load | 1 | fail | 0/0 | 0.0 | - | no | exp/validate-v1-null-20261101072237/006-save-load-r1 |
+| 007-patrol-enemy | 1 | fail | 0/0 | 0.0 | - | no | exp/validate-v1-null-20261101072237/007-patrol-enemy-r1 |
+| 008-hud-health | 1 | fail | 0/6 | 0.0 | - | no | exp/validate-v1-null-20261101072237/008-hud-health-r1 |
+| 009-event-bus | 1 | fail | 0/6 | 0.0 | - | no | exp/validate-v1-null-20261101072237/009-event-bus-r1 |
+| 010-wave-spawner | 1 | fail | 0/0 | 0.0 | - | no | exp/validate-v1-null-20261101072237/010-wave-spawner-r1 |
+| 011-status-effects | 1 | fail | 0/0 | 0.0 | - | no | exp/validate-v1-null-20261101072237/011-status-effects-r1 |
+| 012-weapon-tests | 1 | fail | 0/11 | 0.0 | - | no | exp/validate-v1-null-20261101072237/012-weapon-tests-r1 |
 <!-- results:end -->
