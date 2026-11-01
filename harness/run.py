@@ -17,7 +17,7 @@ from harness.agents import make_agent
 from harness.agents.base import Agent, AgentResult
 from harness.bench import BenchRepo
 from harness.config import ConfigError, ExperimentConfig, check_safe_id
-from harness.host import check_host, host_versions, read_host_memory
+from harness.host import HostReadError, check_host, host_versions, read_host_memory
 from harness.paths import AGENT_USER, GODOT_BIN, ROOT, RUNS, AttemptPaths, attempt_paths
 from harness.provision import SCRIPTS_SRC, sync_scripts
 from harness.remote import Remote, RemoteError
@@ -47,7 +47,7 @@ AGENT_PGREP = f"pgrep -u {AGENT_USER}"
 # Kernel log and runtime journal lines that mean something was OOM-killed.
 OOM_PATTERN = "out of memory|oom-kill|killed process"
 # Exceptions that make an attempt infra_error instead of aborting the experiment.
-INFRA_EXCEPTIONS = (RemoteError, subprocess.CalledProcessError)
+INFRA_EXCEPTIONS = (RemoteError, subprocess.CalledProcessError, HostReadError)
 
 
 class InfraError(Exception):

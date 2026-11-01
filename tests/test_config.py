@@ -69,3 +69,12 @@ def test_host_section_unknown_key(tmp_path):
 
 def test_host_absent_is_none(tmp_path):
     assert _load(tmp_path).host is None
+
+
+@pytest.mark.parametrize("bad, match", [
+    ({"gtt_gib": 3.7}, "host.vram_gib: missing"),
+    ({"vram_gib": "big", "gtt_gib": 3.7}, "host.vram_gib: expected int or float"),
+])
+def test_host_section_invalid(tmp_path, bad, match):
+    with pytest.raises(ConfigError, match=match):
+        _load(tmp_path, host=bad)

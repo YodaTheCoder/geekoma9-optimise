@@ -9,7 +9,7 @@ import pytest
 from conftest import FakeRemote
 from harness.agents.base import AgentResult
 from harness.config import AgentConfig, ExperimentConfig, HostExpect, RuntimeConfig
-from harness.host import HostMismatchError
+from harness.host import HostMismatchError, HostReadError
 from harness.paths import ROOT
 from harness.run import CLOSE_OLD_ATTEMPTS
 from harness.remote import RemoteError
@@ -773,3 +773,21 @@ def test_run_experiment_host_mismatch_runs_nothing(tmp_path):
 def test_attempt_record_pins_host():
     rec = attempt(BenchRemote())
     assert rec.versions["host_vram_mib"] == "24576"
+
+
+def test_unreadable_host_in_attempt_is_infra_error():
+    remote = BenchRemote()
+    remote.replies.insert(0, ("mem_info_vram_total", subprocess.CompletedProcess([], 0, "", "")))
+    agent = FakeAgent()
+    rec = attempt(remote, agent=agent)
+    assert rec.status == "infra_error" and agent.calls == []
+
+
+@pytest.mark.parametrize("host", [None, HostExpect(vram_gib=24, gtt_gib=3.7)])
+def test_unreadable_host_stops_run_and_restores_ollama(tmp_path, host):
+    remote = BenchRemote()
+    remote.replies.insert(0, ("mem_info_vram_total", subprocess.CompletedProcess([], 0, "", "")))
+    with pytest.raises(HostReadError):
+        experiment(tmp_path, remote, FakeAgent(), cfg=replace(CFG, host=host))
+    assert read_records(tmp_path / "results.jsonl") == []
+    assert remote.calls[-2] == "sudo -n systemctl start ollama"

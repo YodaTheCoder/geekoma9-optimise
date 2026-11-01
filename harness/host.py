@@ -11,11 +11,15 @@ _DRM = "/sys/class/drm/card0/device"
 # Lines out: VRAM bytes, GTT bytes, MemTotal, SwapTotal, TTM pages_limit (absent if the file is).
 _READ_CMD = (f"cat {_DRM}/mem_info_vram_total {_DRM}/mem_info_gtt_total; "
              "grep -E '^(MemTotal|SwapTotal):' /proc/meminfo; "
-             "cat /sys/module/ttm/parameters/pages_limit 2>/dev/null")
+             "cat /sys/module/ttm/parameters/pages_limit 2>/dev/null || true")
 
 
 class HostMismatchError(Exception):
     pass
+
+
+class HostReadError(Exception):
+    """The host's memory layout could not be read or parsed."""
 
 
 @dataclass(frozen=True)
@@ -34,7 +38,7 @@ def read_host_memory(remote: Remote) -> HostMemory:
         mem_kb, swap_kb = (int(line.split()[1]) for line in lines[2:4])
         pages = int(lines[4]) if len(lines) > 4 and lines[4].strip() else None
     except (IndexError, ValueError):
-        raise HostMismatchError(f"cannot parse host memory layout: {lines!r}") from None
+        raise HostReadError(f"cannot parse host memory layout: {lines!r}") from None
     return HostMemory(vram_mib=vram // 2**20, gtt_mib=gtt // 2**20,
                       mem_total_mib=mem_kb // 1024, swap_total_mib=swap_kb // 1024,
                       ttm_pages_limit=pages)
