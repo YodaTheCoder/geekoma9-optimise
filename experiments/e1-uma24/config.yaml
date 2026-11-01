@@ -1,0 +1,19 @@
+id: e1-uma24
+task_set: v1
+tier: screening
+notes: >-
+  E1 memory split, uma24: BIOS UMA 24 GiB GPU (as E0), default GTT; re-run of E0 with host,
+  GPU offload and swap recorded. Runtime/model/agent identical to E0.
+host: {vram_gib: 24, gtt_gib: 3.7}
+runtime:
+  kind: ollama
+  model: qwen3-coder:30b
+  context: 65536
+agent:
+  kind: command
+  name: opencode
+  version: 1.18.32
+  command: >-
+    BENCH_ENDPOINT={endpoint} OPENCODE_CONFIG="$HOME/.config/agentbench/opencode.json"
+    opencode run --auto --format json --dir {workdir} -m bench/{model} "$(cat {issue_file})"
+  steps_regex: '"type":"tool_use"'

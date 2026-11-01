@@ -208,3 +208,40 @@ into `~/.ssh/known_hosts` from the Mac's (already trusted) copy; `Host geekoma9.
 The owner adds newbuntu's `~/.ssh/id_rsa.pub` to geekoma9's `~/.ssh/authorized_keys`.
 Rollback: remove the known_hosts lines, the ssh config block and that authorized_keys line;
 `sudo apt remove tmux`; `rm ~/.local/bin/uv ~/.local/bin/uvx`; `rm -rf ~/geekoma9-optimise`.
+
+## E1 memory settings
+
+BIOS UMA frame-buffer size: as found 24 GiB (Linux sees 7.4 GiB). E1 settings: 24 GiB (uma24),
+16 GiB (uma16), the BIOS minimum (umamin). The owner makes BIOS changes at the machine.
+
+BIOS path: (recorded when the owner makes the first change)
+
+### umamin_gtt24 only: kernel TTM limits
+
+Applies only to the umamin_gtt24 setting, and only after owner confirmation. Adds
+`ttm.pages_limit=6291456 ttm.page_pool_size=6291456` (24 GiB = 24 × 262144 pages) to the kernel
+command line:
+
+1. Back up the grub config:
+   ```
+   sudo cp /etc/default/grub /etc/default/grub.bak-e1
+   ```
+2. Append the two parameters to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`.
+3. Regenerate the grub config and reboot:
+   ```
+   sudo update-grub
+   sudo reboot
+   ```
+
+Rollback: `sudo cp /etc/default/grub.bak-e1 /etc/default/grub && sudo update-grub`, reboot; BIOS UMA
+back to 24 GiB.
+
+### Verify after any change
+
+```
+cat /sys/class/drm/card0/device/mem_info_vram_total /sys/class/drm/card0/device/mem_info_gtt_total /sys/module/ttm/parameters/pages_limit
+grep -E 'MemTotal|SwapTotal' /proc/meminfo
+```
+
+The harness also checks these against each config's `host:` section (±0.25 GiB) and refuses to run
+on a mismatch.

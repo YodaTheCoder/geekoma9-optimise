@@ -1,0 +1,19 @@
+id: e1-uma16
+task_set: v1
+tier: screening
+notes: >-
+  BIOS UMA 16 GiB GPU, default GTT (half of Linux RAM; corrected to the measured value after the
+  BIOS change).
+host: {vram_gib: 16, gtt_gib: 7.7}
+runtime:
+  kind: ollama
+  model: qwen3-coder:30b
+  context: 65536
+agent:
+  kind: command
+  name: opencode
+  version: 1.18.32
+  command: >-
+    BENCH_ENDPOINT={endpoint} OPENCODE_CONFIG="$HOME/.config/agentbench/opencode.json"
+    opencode run --auto --format json --dir {workdir} -m bench/{model} "$(cat {issue_file})"
+  steps_regex: '"type":"tool_use"'
