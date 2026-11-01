@@ -11,21 +11,24 @@
 | median_tg_tps | - |
 | median_pp_tps | - |
 | throttled | 0 |
+| max_peak_mem_mib | 4159 |
+| max_peak_swap_mib | - |
+| min_gpu_offload | - |
 
-| task | repeat | status | hidden | wall min | tg tok/s | throttled | branch |
-|---|---|---|---|---|---|---|---|
-| 001-health-clamp | 1 | pass | 5/5 | 0.5 | - | no | exp/calibration-frontier-202610311458/001-health-clamp-r1 |
-| 002-damage-signal | 1 | pass | 7/7 | 1.1 | - | no | exp/calibration-frontier-202610311458/002-damage-signal-r1 |
-| 003-score-combo | 1 | pass | 4/4 | 0.6 | - | no | exp/calibration-frontier-202610311458/003-score-combo-r1 |
-| 004-weapon-cooldown | 1 | pass | 5/5 | 0.7 | - | no | exp/calibration-frontier-202610311458/004-weapon-cooldown-r1 |
-| 005-inventory-pickup | 1 | pass | 6/6 | 0.9 | - | no | exp/calibration-frontier-202610311458/005-inventory-pickup-r1 |
-| 006-save-load | 1 | pass | 5/5 | 1.0 | - | no | exp/calibration-frontier-202610311458/006-save-load-r1 |
-| 007-patrol-enemy | 1 | pass | 7/7 | 1.0 | - | no | exp/calibration-frontier-202610311458/007-patrol-enemy-r1 |
-| 008-hud-health | 1 | pass | 6/6 | 1.0 | - | no | exp/calibration-frontier-202610311458/008-hud-health-r1 |
-| 009-event-bus | 1 | pass | 6/6 | 1.0 | - | no | exp/calibration-frontier-202610311458/009-event-bus-r1 |
-| 010-wave-spawner | 1 | pass | 7/7 | 1.0 | - | no | exp/calibration-frontier-202610311458/010-wave-spawner-r1 |
-| 011-status-effects | 1 | pass | 8/8 | 1.4 | - | no | exp/calibration-frontier-202610311458/011-status-effects-r1 |
-| 012-weapon-tests | 1 | pass | 11/11 | 1.2 | - | no | exp/calibration-frontier-202610311458/012-weapon-tests-r1 |
+| task | repeat | status | hidden | wall min | tg tok/s | ram MiB | swap MiB | offload | throttled | branch |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 001-health-clamp | 1 | pass | 5/5 | 0.5 | - | 3239 | - | - | no | exp/calibration-frontier-202610311458/001-health-clamp-r1 |
+| 002-damage-signal | 1 | pass | 7/7 | 1.1 | - | 3618 | - | - | no | exp/calibration-frontier-202610311458/002-damage-signal-r1 |
+| 003-score-combo | 1 | pass | 4/4 | 0.6 | - | 3536 | - | - | no | exp/calibration-frontier-202610311458/003-score-combo-r1 |
+| 004-weapon-cooldown | 1 | pass | 5/5 | 0.7 | - | 3477 | - | - | no | exp/calibration-frontier-202610311458/004-weapon-cooldown-r1 |
+| 005-inventory-pickup | 1 | pass | 6/6 | 0.9 | - | 4124 | - | - | no | exp/calibration-frontier-202610311458/005-inventory-pickup-r1 |
+| 006-save-load | 1 | pass | 5/5 | 1.0 | - | 3686 | - | - | no | exp/calibration-frontier-202610311458/006-save-load-r1 |
+| 007-patrol-enemy | 1 | pass | 7/7 | 1.0 | - | 3567 | - | - | no | exp/calibration-frontier-202610311458/007-patrol-enemy-r1 |
+| 008-hud-health | 1 | pass | 6/6 | 1.0 | - | 3483 | - | - | no | exp/calibration-frontier-202610311458/008-hud-health-r1 |
+| 009-event-bus | 1 | pass | 6/6 | 1.0 | - | 4052 | - | - | no | exp/calibration-frontier-202610311458/009-event-bus-r1 |
+| 010-wave-spawner | 1 | pass | 7/7 | 1.0 | - | 3463 | - | - | no | exp/calibration-frontier-202610311458/010-wave-spawner-r1 |
+| 011-status-effects | 1 | pass | 8/8 | 1.4 | - | 3466 | - | - | no | exp/calibration-frontier-202610311458/011-status-effects-r1 |
+| 012-weapon-tests | 1 | pass | 11/11 | 1.2 | - | 4159 | - | - | no | exp/calibration-frontier-202610311458/012-weapon-tests-r1 |
 <!-- results:end -->
 
 ## Findings

@@ -38,7 +38,7 @@ mib() {
     printf -v "$1" '%d' $((b / 1048576))
 }
 
-echo "ts,mem_used_mib,vram_used_mib,gtt_used_mib,tctl_c,edge_c,sclk_mhz,cpu_mhz_avg" > "$out"
+echo "ts,mem_used_mib,vram_used_mib,gtt_used_mib,tctl_c,edge_c,sclk_mhz,cpu_mhz_avg,swap_used_mib" > "$out"
 
 while :; do
     ts=$EPOCHSECONDS
@@ -50,6 +50,15 @@ while :; do
         esac
     done < /proc/meminfo
     [ -n "$total" ] && [ -n "$avail" ] && mem=$(((total - avail) / 1024))
+
+    swap=0 stot="" sfree=""
+    while read -r key val _; do
+        case $key in
+            SwapTotal:) stot=$val ;;
+            SwapFree:) sfree=$val; break ;;
+        esac
+    done < /proc/meminfo
+    [ -n "$stot" ] && [ -n "$sfree" ] && [ "$stot" -gt 0 ] && swap=$(((stot - sfree) / 1024))
 
     sclk=""
     if [ -r "$drm/pp_dpm_sclk" ]; then
@@ -71,6 +80,6 @@ while :; do
     mib gtt "$drm/mem_info_gtt_used"
     temp tctl "$k10"
     temp edge "$amd"
-    echo "$ts,$mem,$vram,$gtt,$tctl,$edge,$sclk,$cpu" >> "$out"
+    echo "$ts,$mem,$vram,$gtt,$tctl,$edge,$sclk,$cpu,$swap" >> "$out"
     sleep "$interval"
 done

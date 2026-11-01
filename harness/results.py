@@ -39,6 +39,7 @@ class AttemptRecord:
     started_at: str
     error: str = ""
     gpu_offload: float | None = None
+    peak_swap_mib: int | None = None
 
 
 def drop_partial_tail(path: Path) -> None:

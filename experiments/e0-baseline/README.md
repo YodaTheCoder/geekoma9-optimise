@@ -11,16 +11,19 @@
 | median_tg_tps | 25.330 |
 | median_pp_tps | 3827.538 |
 | throttled | 0 |
+| max_peak_mem_mib | 7494 |
+| max_peak_swap_mib | - |
+| min_gpu_offload | - |
 
-| task | repeat | status | hidden | wall min | tg tok/s | throttled | branch |
-|---|---|---|---|---|---|---|---|
-| 001-health-clamp | 1 | fail | 0/5 | 1.4 | 24.8 | no | exp/e0-baseline-202610311713/001-health-clamp-r1 |
-| 004-weapon-cooldown | 1 | pass | 5/5 | 2.0 | 25.1 | no | exp/e0-baseline-202610311713/004-weapon-cooldown-r1 |
-| 005-inventory-pickup | 1 | fail | 3/6 | 2.5 | 33.7 | no | exp/e0-baseline-202610311713/005-inventory-pickup-r1 |
-| 007-patrol-enemy | 1 | pass | 7/7 | 3.3 | 21.7 | no | exp/e0-baseline-202610311713/007-patrol-enemy-r1 |
-| 009-event-bus | 1 | infra_error | 0/0 | 0.0 | - | no | exp/e0-baseline-202610311713/009-event-bus-r1 |
-| 009-event-bus | 1 | fail | 6/6 | 2.2 | 25.6 | no | exp/e0-baseline-202610311713/009-event-bus-r1 |
-| 011-status-effects | 1 | fail | 0/0 | 4.5 | 30.6 | no | exp/e0-baseline-202610311713/011-status-effects-r1 |
+| task | repeat | status | hidden | wall min | tg tok/s | ram MiB | swap MiB | offload | throttled | branch |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 001-health-clamp | 1 | fail | 0/5 | 1.4 | 24.8 | 4038 | - | - | no | exp/e0-baseline-202610311713/001-health-clamp-r1 |
+| 004-weapon-cooldown | 1 | pass | 5/5 | 2.0 | 25.1 | 5112 | - | - | no | exp/e0-baseline-202610311713/004-weapon-cooldown-r1 |
+| 005-inventory-pickup | 1 | fail | 3/6 | 2.5 | 33.7 | 6386 | - | - | no | exp/e0-baseline-202610311713/005-inventory-pickup-r1 |
+| 007-patrol-enemy | 1 | pass | 7/7 | 3.3 | 21.7 | 7494 | - | - | no | exp/e0-baseline-202610311713/007-patrol-enemy-r1 |
+| 009-event-bus | 1 | infra_error | 0/0 | 0.0 | - | - | - | - | no | exp/e0-baseline-202610311713/009-event-bus-r1 |
+| 009-event-bus | 1 | fail | 6/6 | 2.2 | 25.6 | 3591 | - | - | no | exp/e0-baseline-202610311713/009-event-bus-r1 |
+| 011-status-effects | 1 | fail | 0/0 | 4.5 | 30.6 | 5187 | - | - | no | exp/e0-baseline-202610311713/011-status-effects-r1 |
 <!-- results:end -->
 
 ## Findings

@@ -13,6 +13,7 @@ class SampleSummary:
     peak_gpu_mem_mib: int | None
     max_tctl_c: float | None
     throttled: bool
+    peak_swap_mib: int | None = None
 
 
 def _num(value: str | None) -> float | None:
@@ -26,6 +27,7 @@ def summarize_samples(csv_text: str) -> SampleSummary:
     mem: list[float] = []
     gpu: list[float] = []
     tctl: list[float] = []
+    swap: list[float] = []
     for row in csv.DictReader(io.StringIO(csv_text)):
         m = _num(row.get("mem_used_mib"))
         if m is not None:
@@ -34,6 +36,9 @@ def summarize_samples(csv_text: str) -> SampleSummary:
         gtt = _num(row.get("gtt_used_mib"))
         if vram is not None or gtt is not None:
             gpu.append((vram or 0.0) + (gtt or 0.0))
+        sw = _num(row.get("swap_used_mib"))
+        if sw is not None:
+            swap.append(sw)
         t = _num(row.get("tctl_c"))
         if t is not None:
             tctl.append(t)
@@ -43,4 +48,5 @@ def summarize_samples(csv_text: str) -> SampleSummary:
         peak_gpu_mem_mib=int(max(gpu)) if gpu else None,
         max_tctl_c=max_tctl,
         throttled=max_tctl is not None and max_tctl >= THROTTLE_TCTL_C,
+        peak_swap_mib=int(max(swap)) if swap else None,
     )

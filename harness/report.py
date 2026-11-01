@@ -22,6 +22,19 @@ class Summary:
     median_tg_tps: float | None
     median_pp_tps: float | None
     throttled: int
+    max_peak_mem_mib: int | None
+    max_peak_swap_mib: int | None
+    min_gpu_offload: float | None
+
+
+def _max(values: list) -> int | None:
+    present = [v for v in values if v is not None]
+    return max(present) if present else None
+
+
+def _min(values: list) -> float | None:
+    present = [v for v in values if v is not None]
+    return min(present) if present else None
 
 
 def _median(values: list[float | None]) -> float | None:
@@ -47,6 +60,9 @@ def summarize(records: list[AttemptRecord],
         median_tg_tps=_median([r.tg_tps for r in scored]),
         median_pp_tps=_median([r.pp_tps for r in scored]),
         throttled=sum(1 for r in scored if r.throttled),
+        max_peak_mem_mib=_max([r.peak_mem_mib for r in scored]),
+        max_peak_swap_mib=_max([r.peak_swap_mib for r in scored]),
+        min_gpu_offload=_min([r.gpu_offload for r in scored]),
     )
 
 
@@ -61,12 +77,14 @@ def _fmt(value) -> str:
 def render_markdown(summary: Summary, records: list[AttemptRecord]) -> str:
     lines = ["| metric | value |", "|---|---|"]
     lines += [f"| {k} | {_fmt(v)} |" for k, v in asdict(summary).items()]
-    lines += ["", "| task | repeat | status | hidden | wall min | tg tok/s | throttled | branch |",
-              "|---|---|---|---|---|---|---|---|"]
+    lines += ["", "| task | repeat | status | hidden | wall min | tg tok/s | ram MiB | swap MiB | offload | throttled | branch |",
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in records:
         tg = "-" if r.tg_tps is None else f"{r.tg_tps:.1f}"
+        off = "-" if r.gpu_offload is None else f"{r.gpu_offload:.2f}"
         lines.append(f"| {r.task} | {r.repeat} | {r.status} | {r.hidden_passed}/{r.hidden_total} "
-                     f"| {r.wall_s / 60:.1f} | {tg} | {'yes' if r.throttled else 'no'} "
+                     f"| {r.wall_s / 60:.1f} | {tg} | {_fmt(r.peak_mem_mib)} | {_fmt(r.peak_swap_mib)} "
+                     f"| {off} | {'yes' if r.throttled else 'no'} "
                      f"| {r.branch} |")
     return "\n".join(lines)
 

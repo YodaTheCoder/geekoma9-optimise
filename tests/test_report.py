@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from harness.report import render_markdown, summarize, write_readme
@@ -39,8 +41,8 @@ def test_render_markdown_has_summary_and_task_rows():
     recs = [r("pass", 1800, tg=12.345, task="001-a"), r("fail", 600, throttled=True, task="002-b")]
     md = render_markdown(summarize(recs), recs)
     assert "solved_per_8h" in md
-    assert "| 001-a | 1 | pass | 3/3 | 30.0 | 12.3 | no | exp/e-1/001-a-r1 |" in md
-    assert "| 002-b | 1 | fail | 0/3 | 10.0 | - | yes | exp/e-1/002-b-r1 |" in md
+    assert "| 001-a | 1 | pass | 3/3 | 30.0 | 12.3 | - | - | - | no | exp/e-1/001-a-r1 |" in md
+    assert "| 002-b | 1 | fail | 0/3 | 10.0 | - | - | - | - | yes | exp/e-1/002-b-r1 |" in md
 
 
 def test_write_readme_creates_and_replaces_block(tmp_path):
@@ -70,3 +72,26 @@ def test_unscored_counts_plan_entries_without_a_result():
     assert s.unscored == 2  # t2 and t4
     assert summarize(recs).unscored == 0  # no plan, nothing known
     assert "| unscored | 2 |" in render_markdown(s, recs)
+
+
+def test_report_memory_columns():
+    a = r("pass", 60, task="a")
+    b = r("fail", 60, task="b")
+    a = dataclasses.replace(a, peak_mem_mib=7494, peak_swap_mib=900, gpu_offload=1.0)
+    b = dataclasses.replace(b, peak_mem_mib=5112, peak_swap_mib=None, gpu_offload=0.8)
+    s = summarize([a, b])
+    assert s.max_peak_mem_mib == 7494 and s.max_peak_swap_mib == 900 and s.min_gpu_offload == 0.8
+    md = render_markdown(s, [a, b])
+    assert "| ram MiB | swap MiB | offload |" in md
+    assert "| 7494 | 900 | 1.00 |" in md
+
+
+def test_report_old_records():
+    from pathlib import Path
+    from harness.results import read_records
+    path = Path(__file__).parent.parent / "experiments/e0-baseline/results.jsonl"
+    recs = read_records(path)
+    s = summarize(recs)
+    md = render_markdown(s, recs)
+    assert s.max_peak_swap_mib is None and s.min_gpu_offload is None
+    assert "| max_peak_swap_mib | - |" in md

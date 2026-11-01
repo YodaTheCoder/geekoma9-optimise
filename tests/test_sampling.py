@@ -34,3 +34,16 @@ def test_header_only_is_all_none():
 def test_throttle_threshold():
     assert summarize_samples(HEADER + "1,1,1,1,95.0,,,\n").throttled is True
     assert summarize_samples(HEADER + "1,1,1,1,94.9,,,\n").throttled is False
+
+
+def test_summarize_samples_swap():
+    csv = HEADER.rstrip("\n") + ",swap_used_mib\n" + (
+        "1,1000,0,0,60.0,50.0,800,2000,259\n"
+        "2,1000,0,0,60.0,50.0,800,2000,1300\n"
+        "3,1000,0,0,60.0,50.0,800,2000,800\n"
+    )
+    assert summarize_samples(csv).peak_swap_mib == 1300
+
+
+def test_summarize_samples_old_csv():
+    assert summarize_samples(HEADER + "1,1000,0,0,60.0,50.0,800,2000\n").peak_swap_mib is None

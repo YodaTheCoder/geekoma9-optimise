@@ -397,7 +397,8 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
         pp_tps=usage.pp_tps, tg_tps=usage.tg_tps,
         peak_mem_mib=samples.peak_mem_mib, peak_gpu_mem_mib=samples.peak_gpu_mem_mib,
         steps=result.steps, throttled=samples.throttled, upstream_errors=usage.upstream_errors,
-        pushed=pushed, versions=versions, error=error, gpu_offload=gpu_offload)
+        pushed=pushed, versions=versions, error=error, gpu_offload=gpu_offload,
+        peak_swap_mib=samples.peak_swap_mib)
 
 
 def _run_id(cfg: ExperimentConfig, exp_dir: Path, clock) -> str:
