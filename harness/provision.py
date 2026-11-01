@@ -6,13 +6,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from harness.paths import AGENT_USER, MIRROR, ROOT
+from harness.paths import AGENT_USER, GODOT_BIN, MIRROR, OWNER_HOME, ROOT, RUNS
 from harness.remote import Remote, RemoteError
 
 SCRIPTS_SRC = Path(__file__).resolve().parent / "remote_scripts"
 # HTTPS so the clone works before the deploy key is added; BenchRepo.update fetches over ssh later.
 MIRROR_CLONE_URL = "https://github.com/YodaTheCoder/godot-agent-bench.git"
-GODOT_BIN = f"{ROOT}/opt/godot/godot"
 OLLAMA_BIN = "/usr/local/bin/ollama"
 MODEL_STORE = "/usr/share/ollama/.ollama/models"
 MIN_PYTHON = (3, 10)
@@ -89,8 +88,8 @@ def check_model_store(remote: Remote) -> Check:
 
 
 def check_agent_user(remote: Remote) -> Check:
-    """The agent user exists, has no sudo, can run Godot, and cannot read the mirror or an
-    earlier attempt (setup in docs/provisioning.md)."""
+    """The agent user exists, has no sudo, can run Godot, cannot enter the owner's home, and
+    cannot read the mirror or an earlier attempt (setup in docs/provisioning.md)."""
     name = "agent-user"
     u = shlex.quote(AGENT_USER)
     ok, out = _sh(remote, f"id -u {u}")
@@ -106,13 +105,17 @@ def check_agent_user(remote: Remote) -> Check:
     ok, _ = _sh(remote, f"sudo -n -u {u} test -x {shlex.quote(GODOT_BIN)}")
     if not ok:
         return Check(name, False, f"{AGENT_USER} cannot run {GODOT_BIN}")
-    _, attempt = _sh(remote, f"ls -d {ROOT}/runs/*/*/work 2>/dev/null | head -n 1")
+    entered, _ = _sh(remote, f"sudo -n -u {u} test -x {shlex.quote(OWNER_HOME)}")
+    if entered:
+        return Check(name, False, f"{AGENT_USER} can enter {OWNER_HOME} (chmod 750 it)")
+    _, attempt = _sh(remote, f"ls -d {RUNS}/*/*/work 2>/dev/null | head -n 1")
     closed = [MIRROR] + ([attempt.splitlines()[0]] if attempt else [])
     for path in closed:
         readable, _ = _sh(remote, f"sudo -n -u {u} test -r {shlex.quote(path)}")
         if readable:
             return Check(name, False, f"{AGENT_USER} can read {path}")
-    return Check(name, True, f"{AGENT_USER}: no sudo, runs godot, cannot read {', '.join(closed)}")
+    return Check(name, True, f"{AGENT_USER}: no sudo, runs godot, cannot enter {OWNER_HOME} "
+                              f"or read {', '.join(closed)}")
 
 
 CHECKS = (check_python, check_godot, check_ollama, check_deploy_key, check_sudo, check_linger,

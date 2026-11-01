@@ -76,7 +76,7 @@ def test_sync_dir_255(monkeypatch, tmp_path: Path):
 
 def test_attempt_paths():
     p = attempt_paths("e0-202611010100", "001-health-clamp", 2)
-    root = "/home/markn/agentbench/runs/e0-202611010100/001-health-clamp-r2"
+    root = "/srv/agentbench/runs/e0-202611010100/001-health-clamp-r2"
     assert p.root == root
     assert p.workdir == f"{root}/work"
     assert p.task_files == f"{root}/score/task"  # exported after the agent, never beside it

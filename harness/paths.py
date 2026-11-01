@@ -5,6 +5,12 @@ from dataclasses import dataclass
 ROOT = "/home/markn/agentbench"
 MIRROR = f"{ROOT}/bench.git"
 OWNER = "markn"
+OWNER_HOME = f"/home/{OWNER}"
+# What the agent user must reach lives outside OWNER_HOME, which stays closed (0750): a
+# traversable home would expose every world-readable path in it, ~/.claude among them.
+AGENT_ROOT = "/srv/agentbench"
+RUNS = f"{AGENT_ROOT}/runs"
+GODOT_BIN = f"{AGENT_ROOT}/opt/godot/godot"
 # Command agents run as this unprivileged user, so they cannot read the mirror (hidden tests,
 # solutions), other attempts, or the scoring files (docs/provisioning.md).
 AGENT_USER = "agentrun"
@@ -24,7 +30,7 @@ class AttemptPaths:
 
 
 def attempt_paths(run_id: str, task: str, repeat: int) -> AttemptPaths:
-    root = f"{ROOT}/runs/{run_id}/{task}-r{repeat}"
+    root = f"{RUNS}/{run_id}/{task}-r{repeat}"
     return AttemptPaths(
         task=task,
         root=root,

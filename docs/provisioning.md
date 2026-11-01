@@ -7,13 +7,13 @@ run; the exit code is non-zero and names the first failure):
 | check | passes when |
 |---|---|
 | python3 | `python3 --version` >= 3.10 (also needed by the usage proxy) |
-| godot | `~/agentbench/opt/godot/godot --version` matches `.godot-version` at `base-v1` |
+| godot | `/srv/agentbench/opt/godot/godot --version` matches `.godot-version` at `base-v1` |
 | ollama | `/usr/local/bin/ollama --version` runs |
 | deploy-key | `ssh -T git@github-agentbench` says "successfully authenticated" |
 | sudo | `sudo -n systemctl --version` works (passwordless sudo; Ollama is never stopped by a check) |
 | linger | `loginctl show-user markn -p Linger` is `Linger=yes` |
 | model-store | markn can `ls /usr/share/ollama/.ollama/models/manifests` |
-| agent-user | `agentrun` exists, `sudo -n -l -U agentrun` shows no sudo rights, markn can `sudo -n -u agentrun`, agentrun can run Godot, and `sudo -n -u agentrun test -r` fails on `~/agentbench/bench.git` and on an earlier attempt's `work/` |
+| agent-user | `agentrun` exists, `sudo -n -l -U agentrun` shows no sudo rights, markn can `sudo -n -u agentrun`, agentrun can run Godot, `sudo -n -u agentrun test -x /home/markn` fails, and `sudo -n -u agentrun test -r` fails on `~/agentbench/bench.git` and on an earlier attempt's `work/` |
 
 Godot version normalisation: `.godot-version` holds `4.7.2-stable`, `godot --version` prints
 `4.7.2.stable.official.<hash>`. The pin has `-` replaced by `.` and is matched as a prefix
@@ -51,7 +51,8 @@ system Ollama with `sudo -n systemctl stop ollama` before the run and starts it 
    verified against the release's `SHA512-SUMS.txt` (`sha512sum -c`: OK). Installed as
    `~/agentbench/opt/godot/Godot_v4.7.2-stable_linux.x86_64` with symlink
    `~/agentbench/opt/godot/godot`; the zip and sums file are kept in `~/agentbench/dl/`.
-   Rollback: `rm -rf ~/agentbench/opt/godot`.
+   Moved to `/srv/agentbench/opt/godot/` with the agent user setup below (the symlink is relative).
+   Rollback: `rm -rf /srv/agentbench/opt/godot`.
 
 ### Pre/post state of the ACL targets
 
@@ -90,43 +91,49 @@ does the per-attempt part itself:
 - Preflight fails if any `agentrun` process exists; the stray kill also kills them.
 - The oracle applies `solution.patch` straight from the mirror; null and oracle run as markn.
 
+Attempts live in `/srv/agentbench/runs/` and the Godot that agents run in `/srv/agentbench/opt/`, both
+outside `/home/markn`, which stays `0750` so agentrun cannot enter it. A traversable home would expose
+every world-readable path in it, including `~/.claude/projects` (Claude Code transcripts, among them the
+calibration run's solutions), `~/src` and `~/_dev`. The mirror, scripts, run lock and the attempts from
+before the move stay in `~/agentbench`.
+
 One-time setup on geekoma9 (run as markn, who has passwordless sudo):
 
 ```
 sudo useradd --create-home --shell /bin/bash --user-group agentrun   # no sudo group, no password
-sudo chmod 711 /home/markn /home/markn/agentbench /home/markn/agentbench/runs
-sudo chmod 700 /home/markn/agentbench/bench.git
-sudo chmod -R u=rwX,go=rX /home/markn/agentbench/opt                 # agents run Godot themselves
+sudo install -d -o markn -g markn -m 711 /srv/agentbench /srv/agentbench/runs
+sudo install -d -o markn -g markn -m 755 /srv/agentbench/opt
+mv ~/agentbench/opt/godot /srv/agentbench/opt/ && rmdir ~/agentbench/opt
+chmod -R u=rwX,go=rX /srv/agentbench/opt                               # agents run Godot themselves
+chmod 750 /home/markn && chmod 700 ~/agentbench/bench.git
 sudo install -d -o agentrun -g agentrun -m 700 /home/agentrun/.config/agentbench
 sudo install -o agentrun -g agentrun -m 600 /home/markn/.config/agentbench/opencode.json \
     /home/agentrun/.config/agentbench/opencode.json
 echo agentrun | sudo tee -a /etc/cron.deny /etc/at.deny             # no jobs that outlive the attempt
-sudo find /home/markn/agentbench/runs -mindepth 2 -maxdepth 2 -type d -exec chmod 700 {} +
 ```
 
 Then `uv run harness provision` must show `OK   agent-user`. Things to confirm on the live host:
 `sudo -n -l -U agentrun` prints "is not allowed to run sudo"; `sudo -n -u agentrun -H opencode --version`
 works (OpenCode is in `/usr/local/bin`, on sudo's `secure_path`); geekoma9's sudoers sets `use_pty`,
-which is why the harness kills by user and not only by session. Before the change the modes were
-`/home/markn` 750, and `~/agentbench`, `runs/`, `bench.git/`, `opt/`, `~/.config/agentbench` 775.
+which is why the harness kills by user and not only by session. Before the change `/home/markn` was 750
+and `~/agentbench/bench.git` 775; `/srv` held nothing.
 
-Rollback:
+Rollback (copy anything in `/srv/agentbench/runs` worth keeping first):
 
 ```
 sudo userdel -r agentrun
 sudo sed -i '/^agentrun$/d' /etc/cron.deny /etc/at.deny
-sudo chmod 750 /home/markn
-sudo chmod 775 /home/markn/agentbench /home/markn/agentbench/runs /home/markn/agentbench/bench.git
-sudo chmod -R g+w /home/markn/agentbench/opt
+mkdir -p ~/agentbench/opt && mv /srv/agentbench/opt/godot ~/agentbench/opt/
+sudo rm -rf /srv/agentbench
+chmod 775 ~/agentbench/bench.git
 ```
 
-(The attempt folders' `0700`/`0711` modes can stay: markn owns them.)
-
 Frontier calibration: a calibration run (`experiments/calibration-frontier`) now runs Claude Code as
-`agentrun`, so `claude` must be logged in as that user (`ssh -t markn@geekoma9.local sudo -u agentrun
--H /home/markn/.local/bin/claude`, then `/login`); its credentials live in `/home/agentrun/.claude`.
-`~/.local` and `~/.local/share/claude` must be traversable/readable by agentrun for the absolute path
-in the config to work (or install Claude Code for agentrun and change the path).
+`agentrun`, which cannot reach `/home/markn/.local/bin/claude`. Install Claude Code for agentrun
+(`sudo -u agentrun -H bash -c 'curl -fsSL https://claude.ai/install.sh | bash'`), log in as that user
+(`ssh -t markn@geekoma9.local sudo -u agentrun -H /home/agentrun/.local/bin/claude`, then `/login`;
+credentials live in `/home/agentrun/.claude`), and change the path in the config to
+`/home/agentrun/.local/bin/claude`.
 
 ## Recovery if the orchestrator is hard-killed
 

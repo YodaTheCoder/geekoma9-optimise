@@ -17,7 +17,7 @@ from harness.agents import make_agent
 from harness.agents.base import Agent, AgentResult
 from harness.bench import BenchRepo
 from harness.config import ConfigError, ExperimentConfig, check_safe_id
-from harness.paths import AGENT_USER, ROOT, AttemptPaths, attempt_paths
+from harness.paths import AGENT_USER, GODOT_BIN, ROOT, RUNS, AttemptPaths, attempt_paths
 from harness.provision import SCRIPTS_SRC, sync_scripts
 from harness.remote import Remote, RemoteError
 from harness.results import AttemptRecord, append_record, pending, read_records
@@ -30,7 +30,6 @@ from harness.tiers import tier_plan
 from harness.usage import summarize_usage
 
 SCRIPTS_DIR = f"{ROOT}/bin"
-GODOT_BIN = f"{ROOT}/opt/godot/godot"
 PROXY_LISTEN = "127.0.0.1:11500"
 ENDPOINT = f"http://{PROXY_LISTEN}"
 SAMPLE_INTERVAL_S = 5
@@ -190,8 +189,8 @@ def _restore_system_ollama(remote: Remote, clock, attempts: int = 3) -> None:
 # Attempt roots left open (0711) by an interrupted run, and run folders from before the
 # agent user existed: close them so the agent user cannot read earlier attempts.
 CLOSE_OLD_ATTEMPTS = (
-    f"find {ROOT}/runs -mindepth 1 -maxdepth 1 -type d -exec chmod 711 {{}} + && "
-    f"find {ROOT}/runs -mindepth 2 -maxdepth 2 -type d -perm /077 -exec chmod 700 {{}} +")
+    f"find {RUNS} -mindepth 1 -maxdepth 1 -type d -exec chmod 711 {{}} + && "
+    f"find {RUNS} -mindepth 2 -maxdepth 2 -type d -perm /077 -exec chmod 700 {{}} +")
 
 
 def preflight(remote: Remote, runtime: Runtime) -> None:
@@ -421,7 +420,7 @@ def run_experiment(cfg: ExperimentConfig, exp_dir: Path, *, remote: Remote, benc
         sync_scripts(remote)
         scripts_sha = scripts_hash()
         bench.update()
-        remote.run(f"mkdir -p {ROOT}/runs && {CLOSE_OLD_ATTEMPTS}")
+        remote.run(f"mkdir -p {RUNS} && {CLOSE_OLD_ATTEMPTS}")
         _run_loop(cfg, results, run_id, todo, remote=remote, runtime=runtime, agent=agent,
                   bench=bench, scripts_dir=scripts_dir, sha=sha, scripts_sha=scripts_sha,
                   clock=clock)

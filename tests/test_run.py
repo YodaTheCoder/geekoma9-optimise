@@ -180,7 +180,7 @@ def test_pass_record_fields():
     assert any("sample.sh" in c and "samples.csv 5" in c for c in remote.calls)
     assert "kill -TERM -- -111" in remote.calls and "kill -TERM -- -222" in remote.calls
     score = next(c for c in remote.calls if "score.sh" in c)
-    assert f"{ROOT}/opt/godot/godot" in score and "abc123" in score and "/m.git" in score
+    assert "/srv/agentbench/opt/godot/godot" in score and "abc123" in score and "/m.git" in score
 
 
 def test_upstream_error_becomes_infra_error():
@@ -472,7 +472,7 @@ def test_short_regression_run_fails_and_logs_are_fetched():
 
 # ---------------------------------------------------------------- C1: hidden material, agent user
 
-ATT = f"{ROOT}/runs/e0-202610311200/001-health-clamp-r1"
+ATT = "/srv/agentbench/runs/e0-202610311200/001-health-clamp-r1"
 
 
 def test_task_files_exported_only_after_agent_into_score_dir():
@@ -595,6 +595,7 @@ def test_old_attempts_closed_at_run_start(tmp_path):
     remote = BenchRemote()
     experiment(tmp_path, remote, FakeAgent())
     sweep = next(c for c in remote.calls if "find " in c and "/runs" in c)
+    assert "find /srv/agentbench/runs " in sweep
     assert "-mindepth 2 -maxdepth 2 -type d -perm /077 -exec chmod 700" in sweep
     assert remote.calls.index(sweep) < next(i for i, c in enumerate(remote.calls) if "usage_proxy" in c)
 

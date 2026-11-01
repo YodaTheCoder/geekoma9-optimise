@@ -42,7 +42,7 @@ schema: 1
 name: ts-fullstack
 review_context: "TypeScript full-stack app (React/Vite front end, Node API), tested with vitest"
 toolchain:                      # checked by `harness provision`; usable in commands as {tool:<name>}
-  node: {path: /home/markn/agentbench/opt/node/bin/node, version: "v22.11.0"}
+  node: {path: /srv/agentbench/opt/node/bin/node, version: "v22.11.0"}
 protected:                      # restored from the base commit before scoring
   [tests/regression, package.json, package-lock.json, tsconfig.json, tsconfig.node.json, vitest.config.ts]
 hidden_tests: {dest: tests/hidden, glob: "*.test.ts"}
@@ -90,7 +90,7 @@ new scorer and requires the same `(parse_ok, hidden, regression)` from `load_sco
   `uv sync --frozen`.
 - `prepare_workdir` and the scorer's copy get `deps.link` (`node_modules` or `.venv`) as a symlink to that
   folder. Agents can import and run the tests but cannot change installed packages.
-- Toolchains are pinned in `~/agentbench/opt/` (Node 22, `uv` and its managed Python 3.12), as Godot is now,
+- Toolchains are pinned in `/srv/agentbench/opt/` (Node 22, `uv` and its managed Python 3.12), as Godot is now,
   and put first on `PATH` for both agent and scorer.
 - `agent_env` is exported into the agent's environment by `CommandAgent` (npm offline; `UV_OFFLINE=1` and
   `UV_NO_SYNC=1` for Python), so an attempted install fails at once instead of hanging or reaching the network.
@@ -115,7 +115,7 @@ code. That is scored as normal.
   the expected count when the JUnit file has fewer cases.
 - **Provision** runs per registered benchmark: mirror, deploy key, toolchain versions, dependency folder
   present and read-only, manifest valid.
-- **Preflight** additionally fails if any process has its working directory under `~/agentbench/runs/`
+- **Preflight** additionally fails if any process has its working directory under `/srv/agentbench/runs/`
   (via `/proc/*/cwd`), which catches stray `node`/`python` test runs that the current command-line pattern
   would miss.
 - **Review prompt** takes `review_context` from the manifest instead of the fixed Godot wording.
