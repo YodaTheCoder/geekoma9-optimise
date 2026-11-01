@@ -1,0 +1,201 @@
+# Shortlist for experiments E0-E5. Rationale and evidence: research/*.md (2026-10-31).
+# command_template placeholders allowed: {workdir} {issue_file} {endpoint} {model} {log}
+# ({endpoint} is the usage-proxy base URL without /v1; values are shell-quoted by render_command).
+
+runtimes:
+  - name: ollama
+    why: >-
+      Current baseline (0.34.4, bundles llama-server with ROCm 7.2 and Vulkan backends); picks ROCm on
+      gfx1150 with full offload; measured 13-27 tok/s TG on 3B-active MoE. Serves OpenAI and Anthropic APIs.
+    gtt_capable: false
+    gfx1150_status: >-
+      Working via bundled ROCm 7.2 (verified on geekoma9: library=ROCm compute=gfx1150, 66/66 layers offloaded).
+      Sizes memory from the 24.0 GiB carve-out only; GTT use at a minimal UMA is unverified (E1).
+    sources:
+      - https://docs.ollama.com/api/anthropic-compatibility
+      - https://discourse.nixos.org/t/how-to-llama-on-amd-strix-halo/74363
+      - https://github.com/ollama/ollama/releases/tag/v0.40.13
+  - name: llamacpp-vulkan
+    why: >-
+      Upstream llama-server b12020 prebuilt (ubuntu-vulkan-x64) on Mesa RADV 25.2.8; fastest TG on an 890M in
+      community tests (Qwen3-Coder-30B-A3B 31.5 vs 28-28.7 tok/s ROCm); slot prompt cache, --cache-reuse,
+      OpenAI and Anthropic /v1/messages endpoints.
+    gtt_capable: true
+    gfx1150_status: >-
+      Supported by RADV (geekoma9 Ollama log shows 'AMD Radeon 890M (RADV GFX1150)'); no ROCm needed.
+      Set --cache-ram small at 24 GiB UMA (default reportedly 8192 MiB host RAM).
+    sources:
+      - https://github.com/ggml-org/llama.cpp/releases/tag/b12020
+      - https://discourse.nixos.org/t/how-to-llama-on-amd-strix-halo/74363
+      - https://github.com/ggml-org/llama.cpp/discussions/10879
+      - https://github.com/ggml-org/llama.cpp/discussions/30746
+      - https://huggingface.co/blog/ggml-org/anthropic-messages-api-in-llamacpp
+  - name: llamacpp-rocm
+    why: >-
+      Same-age llama.cpp built for gfx1150 with ROCm bundled (lemonade-sdk llamacpp-rocm b1359, ROCm
+      10.3.0a20261030); isolates ROCm vs Vulkan; ROCm tends to win prompt processing / TTFT, which dominates
+      agent workloads.
+    gtt_capable: true
+    gfx1150_status: >-
+      Official gfx1150 build with qualification record; README says OOM despite free VRAM on gfx1150 needs
+      ttm.pages_limit raised. ROCm cannot split one allocation across memory pools (Lemonade FAQ).
+    sources:
+      - https://github.com/lemonade-sdk/llamacpp-rocm
+      - https://github.com/lemonade-sdk/llamacpp-rocm/releases/tag/b1359
+      - https://lemonade-server.ai/docs/guide/faq/
+      - https://github.com/ggml-org/llama.cpp/issues/18159
+
+memory:
+  bios_uma_options:
+    - "24G (verified: current setting, mem_info_vram_total 25769803776)"
+    - "about 4-5G (inferred: on 2026-09-24 Ollama logged 27.0 GiB system RAM before the change to 24G)"
+    - "16G (expected; to verify by owner)"
+    - "minimal 512M/1G/2G or Auto (typical AMD UMA Frame Buffer options; to verify by owner)"
+  gtt_kernel_params: >-
+    ttm.pages_limit=<pages> ttm.page_pool_size=<pages> on the kernel command line (4 KiB pages:
+    GiB x 262144, e.g. 6291456 = 24 GiB). amdgpu.gttsize is deprecated. Current default is
+    969396 pages = 3.70 GiB (half of Linux-visible RAM).
+  variants_to_test:
+    - "uma24: 24 GiB UMA, default GTT (current, E0 baseline)"
+    - "uma16: 16 GiB UMA, default GTT"
+    - "umamin_gtt24: minimal UMA + ttm.pages_limit=6291456 ttm.page_pool_size=6291456 (24 GiB GTT)"
+  sources:
+    - https://www.jeffgeerling.com/blog/2025/increasing-vram-allocation-on-amd-ai-apus-under-linux/
+    - https://community.frame.work/t/igpu-vram-how-much-can-be-assigned/73081
+    - https://forum.level1techs.com/t/rocm-can-only-use-half-of-the-unified-memory-on-my-strix-halo/253152
+    - https://github.com/lemonade-sdk/llamacpp-rocm
+    - https://www.amd.com/en/resources/support-articles/faqs/PA-280.html
+
+models:
+  - name: qwen3-coder-30b-a3b
+    ollama_ref: "qwen3-coder:30b"
+    gguf_repo: unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
+    quants: [Q4_K_M, UD-Q4_K_XL, Q5_K_M]
+    total_params_b: 30.5
+    active_params_b: 3.3
+    est_weights_gb: 18.6
+    max_context: 262144
+    tool_calling_evidence: >-
+      Native XML function-call format; llama.cpp has a dedicated Qwen3-Coder parser; ~96% well-formed calls on
+      code MCP tools via Ollama (PromptQuorum 2026-09); can flip to Hermes XML in OpenCode with large XML prompts
+      (opencode #24824).
+    gdscript_evidence: >-
+      None direct. Qwen family is indirectly the strongest local option (Qwen3.6-35B-A3B 8.7/10 informal Godot 4
+      test; Qwen3.7 Max 13/15 on Flockbay headless Godot bench).
+    sources:
+      - https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct
+      - https://github.com/ggml-org/llama.cpp/pull/16755
+      - https://www.promptquorum.com/power-local-llm/best-local-models-tool-calling-2026
+      - https://github.com/anomalyco/opencode/issues/24824
+      - https://note.com/dapper_crab2524/n/n1d72e66c9e46
+  - name: laguna-xs-2.1
+    ollama_ref: "laguna-xs-2.1:q4_K_M"
+    gguf_repo: poolside/Laguna-XS-2.1-GGUF
+    quants: [Q4_K_M]
+    total_params_b: 33.4
+    active_params_b: 3.0
+    est_weights_gb: 20.3
+    max_context: 262144
+    tool_calling_evidence: >-
+      Vendor: tool calls and reasoning work out of the box in Ollama's laguna template; dedicated poolside_v1
+      parser in vLLM/TRT-LLM; upstream llama.cpp needs a PR build. SWE-bench Verified 70.9, Terminal-Bench 2.0
+      37.5 (vendor).
+    gdscript_evidence: >-
+      Sibling Laguna S 2.1 scored 9/15 first try, 12/15 after one fix on Flockbay's Godot 4.7.2 headless bench
+      (Oct 2026) - weaker than other open models there.
+    sources:
+      - https://huggingface.co/poolside/Laguna-XS-2.1
+      - https://huggingface.co/poolside/Laguna-XS-2.1-GGUF
+      - https://flockbay.com/blog/best-ai-for-godot/
+  - name: north-mini-code-1.0
+    ollama_ref: "north-mini-code-1.0:q4_K_M"
+    gguf_repo: unsloth/North-Mini-Code-1.0-GGUF
+    quants: [Q4_K_M, UD-Q4_K_XL, MXFP4_MOE, UD-Q5_K_M]
+    total_params_b: 30.5
+    active_params_b: 3.0
+    est_weights_gb: 18.6
+    max_context: 262144
+    tool_calling_evidence: >-
+      Trained specifically for OpenCode compatibility, works with most agents (Cohere); vLLM parser
+      cohere_command4; no documented llama.cpp parser. SWE-bench Verified 67.6 (SWE-Agent), Terminal-Bench 2 36.
+    gdscript_evidence: "None found."
+    sources:
+      - https://cohere.com/blog/north-mini-code
+      - https://huggingface.co/CohereLabs/North-Mini-Code-1.0
+      - https://huggingface.co/unsloth/North-Mini-Code-1.0-GGUF
+  - name: gpt-oss-20b
+    ollama_ref: "gpt-oss:20b"
+    gguf_repo: ggml-org/gpt-oss-20b-GGUF
+    quants: [MXFP4]
+    total_params_b: 20.9
+    active_params_b: 3.6
+    est_weights_gb: 13.8
+    max_context: 131072
+    tool_calling_evidence: >-
+      Harmony format supported by Ollama and llama.cpp; earlier GGUF tool-call bugs fixed over time; weak at
+      forced JSON output; SWE-bench Verified 60.7 high reasoning (model card), reproduced at 60.4.
+    gdscript_evidence: "None found."
+    sources:
+      - https://arxiv.org/pdf/2508.10925
+      - https://arxiv.org/pdf/2604.00362
+      - https://huggingface.co/ggml-org/gpt-oss-20b-GGUF
+      - https://www.glukhov.org/llm-performance/ollama/ollama-gpt-oss-structured-output-issues/
+
+harnesses:
+  - name: opencode
+    version: "1.18.32"
+    api: openai
+    install: |
+      opencode --version 2>/dev/null | grep -qx 1.18.32 || sudo npm install -g opencode-ai@1.18.32
+      mkdir -p ~/.config/agentbench
+      cat > ~/.config/agentbench/opencode.json <<'EOF'
+      {"$schema":"https://opencode.ai/config.json","autoupdate":false,"share":"disabled",
+      "provider":{"bench":{"npm":"@ai-sdk/openai-compatible","name":"agentbench",
+      "options":{"baseURL":"{env:BENCH_ENDPOINT}/v1","apiKey":"local","includeUsage":true},
+      "models":{"qwen3-coder:30b":{},"laguna-xs-2.1:q4_K_M":{},"north-mini-code-1.0:q4_K_M":{},
+      "gpt-oss:20b":{},"gemma4:26b-a4b-it-q4_K_M":{}}}}}
+      EOF
+    command_template: >-
+      BENCH_ENDPOINT={endpoint} OPENCODE_CONFIG="$HOME/.config/agentbench/opencode.json"
+      opencode run --auto --format json --dir {workdir} -m bench/{model} "$(cat {issue_file})"
+    steps_regex: '"type":"tool_use"'
+    headless: true
+    sources:
+      - https://opencode.ai/docs/cli/
+      - https://opencode.ai/docs/providers/
+      - https://littlebearapps.com/help/untether/opencode-stream-json-cheatsheet/
+      - https://www.kunalganglani.com/blog/opencode-vs-claude-code-token-overhead.md
+  - name: claude-code
+    version: "2.1.316"
+    api: anthropic
+    install: "curl -fsSL https://claude.ai/install.sh | bash -s 2.1.316"
+    command_template: >-
+      ANTHROPIC_BASE_URL={endpoint} ANTHROPIC_API_KEY=local ANTHROPIC_AUTH_TOKEN=local ANTHROPIC_MODEL={model}
+      ANTHROPIC_DEFAULT_HAIKU_MODEL={model} CLAUDE_CODE_ATTRIBUTION_HEADER=0
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1
+      "$HOME/.local/bin/claude" -p --bare --dangerously-skip-permissions --output-format stream-json --verbose
+      --model {model} "$(cat {issue_file})"
+    steps_regex: '"type":"tool_use"'
+    headless: true
+    sources:
+      - https://docs.ollama.com/api/anthropic-compatibility
+      - https://huggingface.co/blog/ggml-org/anthropic-messages-api-in-llamacpp
+      - https://mykolaaleksandrov.dev/posts/2026/06/claude-code-huge-prompt-investigation/
+      - https://github.com/anthropics/claude-code/issues/51239
+  - name: mini-swe-agent
+    version: "2.4.6"
+    api: openai
+    install: "~/.local/bin/uv tool install mini-swe-agent==2.4.6"
+    command_template: >-
+      MSWEA_CONFIGURED=true MSWEA_COST_TRACKING=ignore_errors OPENAI_API_KEY=local
+      "$HOME/.local/bin/mini" -y --exit-immediately -l 0 -m openai/{model}
+      -c mini.yaml -c model.model_kwargs.api_base={endpoint}/v1 -o {log}.traj.json -t "$(cat {issue_file})"
+    steps_regex: 'mini-swe-agent \(step \d+'
+    headless: true
+    sources:
+      - https://github.com/SWE-agent/mini-swe-agent
+      - https://mini-swe-agent.com/latest/usage/mini/
+      - https://mini-swe-agent.com/latest/models/local_models/
+      - https://swebench.com/bash-only.html
+
+e0_default_harness: opencode

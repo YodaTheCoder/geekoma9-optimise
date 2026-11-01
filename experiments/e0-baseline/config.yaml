@@ -1,0 +1,19 @@
+id: e0-baseline
+task_set: v1
+tier: screening
+notes: >-
+  E0 baseline: geekoma9 as found. BIOS UMA split 24 GiB GPU / 7.4 GiB visible to Linux,
+  Ollama 0.34.4 (ROCm gfx1150 backend), qwen3-coder:30b at 64k context, OpenCode 1.18.32 as the
+  default harness from research/shortlist.yaml.
+runtime:
+  kind: ollama
+  model: qwen3-coder:30b
+  context: 65536
+agent:
+  kind: command
+  name: opencode
+  version: 1.18.32
+  command: >-
+    BENCH_ENDPOINT={endpoint} OPENCODE_CONFIG="$HOME/.config/agentbench/opencode.json"
+    opencode run --auto --format json --dir {workdir} -m bench/{model} "$(cat {issue_file})"
+  steps_regex: '"type":"tool_use"'

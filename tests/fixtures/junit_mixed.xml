@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="res://tests/hidden/test_a.gd" tests="3" failures="1" errors="0">
+    <testcase name="test_one"/>
+    <testcase name="test_two"/>
+    <testcase name="test_three"><failure message="nope"/></testcase>
+  </testsuite>
+  <testsuite name="res://tests/hidden/test_b.gd" tests="2" failures="0" errors="1">
+    <testcase name="test_four"/>
+    <testcase name="test_five"><error message="boom"/></testcase>
+  </testsuite>
+</testsuites>

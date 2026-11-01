@@ -1,0 +1,11 @@
+id: validate-v1-null
+task_set: v1
+tier: all
+cooldown_s: 0
+runtime:
+  kind: ollama
+  model: qwen3-coder:30b
+  context: 65536
+agent:
+  kind: 'null'
+  name: 'null'
