@@ -10,6 +10,7 @@ from conftest import FakeRemote
 from harness.agents.base import AgentResult
 from harness.config import AgentConfig, ExperimentConfig, RuntimeConfig
 from harness.paths import ROOT
+from harness.run import CLOSE_OLD_ATTEMPTS
 from harness.remote import RemoteError
 from harness.results import append_record, read_records
 from harness.config import ConfigError
@@ -598,6 +599,8 @@ def test_old_attempts_closed_at_run_start(tmp_path):
     assert "find /srv/agentbench/runs " in sweep
     assert "-mindepth 2 -maxdepth 2 -type d -perm /077 -exec chmod 700" in sweep
     assert remote.calls.index(sweep) < next(i for i, c in enumerate(remote.calls) if "usage_proxy" in c)
+    # and again before every attempt, so one failed close cannot leave a root open to the next
+    assert sum(1 for c in remote.calls if c.endswith(CLOSE_OLD_ATTEMPTS)) >= 2
 
 
 # ---------------------------------------------------------------- I3: a branch per try

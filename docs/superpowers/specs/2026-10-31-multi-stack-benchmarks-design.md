@@ -85,7 +85,7 @@ new scorer and requires the same `(parse_ok, hidden, regression)` from `load_sco
 ## 2. Dependencies and the agent's environment
 
 - `harness provision` installs each benchmark's dependencies once from the lockfile at its base tag into
-  `~/agentbench/deps/<bench>/<sha256 of lockfile>/`, then makes that folder read-only (`chmod -R a-w`).
+  `/srv/agentbench/deps/<bench>/<sha256 of lockfile>/` (outside the owner's closed home, so the agent user can reach it), then makes that folder read-only (`chmod -R a-w`).
   This is the only network step. npm runs with `--ignore-scripts`; Python dependencies are wheels via
   `uv sync --frozen`.
 - `prepare_workdir` and the scorer's copy get `deps.link` (`node_modules` or `.venv`) as a symlink to that

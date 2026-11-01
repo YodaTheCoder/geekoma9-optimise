@@ -107,6 +107,7 @@ def test_agent_user_ok():
     assert "sudo -n -u agentrun test -r /srv/agentbench/runs/e0-1/001-a-r1/work" in calls
     assert "sudo -n -u agentrun test -x /srv/agentbench/opt/godot/godot" in calls
     assert "sudo -n -u agentrun test -x /home/markn" in calls
+    assert "sudo -n -u agentrun test -r /srv/agentbench/runs;" in calls  # cannot list the attempts
 
 
 def test_agent_user_missing():

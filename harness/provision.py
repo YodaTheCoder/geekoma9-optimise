@@ -109,7 +109,7 @@ def check_agent_user(remote: Remote) -> Check:
     if entered:
         return Check(name, False, f"{AGENT_USER} can enter {OWNER_HOME} (chmod 750 it)")
     _, attempt = _sh(remote, f"ls -d {RUNS}/*/*/work 2>/dev/null | head -n 1")
-    closed = [MIRROR] + ([attempt.splitlines()[0]] if attempt else [])
+    closed = [MIRROR, RUNS] + ([attempt.splitlines()[0]] if attempt else [])
     for path in closed:
         readable, _ = _sh(remote, f"sudo -n -u {u} test -r {shlex.quote(path)}")
         if readable:

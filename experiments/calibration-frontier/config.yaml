@@ -15,7 +15,7 @@ agent:
   name: claude-code
   version: 2.1.309
   command: >-
-    /home/markn/.local/bin/claude -p --model opus --dangerously-skip-permissions
+    /home/agentrun/.local/bin/claude -p --model opus --dangerously-skip-permissions
     --output-format stream-json --verbose "$(cat {issue_file})"
   steps_regex: '"type":"tool_use"'
   env:

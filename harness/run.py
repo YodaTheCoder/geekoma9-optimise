@@ -307,6 +307,7 @@ def run_attempt(cfg: ExperimentConfig, run_id: str, task: str, repeat: int, *, r
     try:
         preflight(remote, runtime)
         versions = {**runtime.versions(remote), **versions}
+        remote.run(CLOSE_OLD_ATTEMPTS)  # again per attempt: a failed close must not stay open
         bench.prepare_workdir(paths, cfg.task_set, task, branch)
         try:
             scripts = shlex.quote(scripts_dir)

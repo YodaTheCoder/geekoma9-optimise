@@ -94,3 +94,10 @@ def test_timeout_maps_to_remote_error(monkeypatch):
     monkeypatch.setattr(subprocess, "run", boom)
     with pytest.raises(RemoteError):
         Remote().run("sleep 9", timeout=1)
+
+
+def test_agent_paths_outside_owner_home():
+    # The owner's home stays closed (0750); everything the agent user reaches lives elsewhere.
+    from harness.paths import GODOT_BIN, OWNER_HOME, RUNS
+    for p in (RUNS, GODOT_BIN, attempt_paths("r", "t", 1).workdir):
+        assert not p.startswith(OWNER_HOME + "/")

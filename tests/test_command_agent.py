@@ -175,3 +175,28 @@ def test_agent_stdin_is_dev_null(fake_remote):
     # An open ssh stdin hangs agents that read piped input (OpenCode `run` waits on it forever).
     CommandAgent(cfg()).run(fake_remote, PATHS, "e", "m", 5)
     assert _agent_call(fake_remote).endswith("< /dev/null > " + PATHS.agent_log + " 2>&1")
+
+
+def test_command_agent_resets_agent_home_before_run(fake_remote):
+    # An earlier attempt's sessions, caches and temp files must not reach the next one.
+    CommandAgent(cfg()).run(fake_remote, PATHS, "e", "m", 5)
+    calls = fake_remote.calls
+    i_reset = next(i for i, c in enumerate(calls) if "sudo -n -u agentrun -H bash -c" in c
+                   and "! -name .config" in c)
+    assert i_reset < calls.index(_agent_call(fake_remote))
+    reset = calls[i_reset]
+    assert "/tmp /var/tmp /dev/shm" in reset and "-user agentrun" in reset
+    assert ".credentials.json" in reset  # Claude Code's login survives, its transcripts do not
+
+
+def test_command_agent_reset_failure_stops_attempt(fake_remote):
+    run = fake_remote.run
+
+    def failing_reset(cmd, timeout=None, check=True):
+        if "! -name .config" in cmd and check:
+            raise RemoteError("rm: cannot remove")
+        return run(cmd, timeout=timeout, check=check)
+    fake_remote.run = failing_reset
+    with pytest.raises(RemoteError):
+        CommandAgent(cfg()).run(fake_remote, PATHS, "e", "m", 5)
+    assert not any("setsid" in c for c in fake_remote.calls)

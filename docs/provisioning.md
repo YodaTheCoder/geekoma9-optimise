@@ -89,6 +89,12 @@ does the per-attempt part itself:
   `score/project` are deleted (logs, XML and `score.json` are kept) and the attempt root becomes `0700`.
   At run start every older attempt root is made `0700` and every run folder `0711`.
 - Preflight fails if any `agentrun` process exists; the stray kill also kills them.
+- Before each agent run, agentrun's home is reset as that user: everything goes except
+  `~/.config/agentbench`, `~/.claude/.credentials.json`, `~/.claude.json`, `~/.local/bin/claude` and
+  `~/.local/share/claude` (Claude Code's install and login), and agentrun's entries in `/tmp`,
+  `/var/tmp` and `/dev/shm` are deleted. So no attempt, not even a repeat of the same task, sees an
+  earlier one's OpenCode sessions, Claude Code transcripts, caches or scratch files.
+- The run-start sweep that closes old attempt roots runs again before every attempt.
 - The oracle applies `solution.patch` straight from the mirror; null and oracle run as markn.
 
 Attempts live in `/srv/agentbench/runs/` and the Godot that agents run in `/srv/agentbench/opt/`, both
@@ -104,6 +110,7 @@ sudo useradd --create-home --shell /bin/bash --user-group agentrun   # no sudo g
 sudo install -d -o markn -g markn -m 711 /srv/agentbench /srv/agentbench/runs
 sudo install -d -o markn -g markn -m 755 /srv/agentbench/opt
 mv ~/agentbench/opt/godot /srv/agentbench/opt/ && rmdir ~/agentbench/opt
+ln -sfn Godot_v4.7.2-stable_linux.x86_64 /srv/agentbench/opt/godot/godot
 chmod -R u=rwX,go=rX /srv/agentbench/opt                               # agents run Godot themselves
 chmod 750 /home/markn && chmod 700 ~/agentbench/bench.git
 sudo install -d -o agentrun -g agentrun -m 700 /home/agentrun/.config/agentbench
@@ -118,10 +125,11 @@ works (OpenCode is in `/usr/local/bin`, on sudo's `secure_path`); geekoma9's sud
 which is why the harness kills by user and not only by session. Before the change `/home/markn` was 750
 and `~/agentbench/bench.git` 775; `/srv` held nothing.
 
-Rollback (copy anything in `/srv/agentbench/runs` worth keeping first):
+Rollback (copy anything in `/srv/agentbench/runs` worth keeping first; the harness also needs this
+change reverted, `git revert` of the commit that moved the paths to `/srv`):
 
 ```
-sudo userdel -r agentrun
+sudo pkill -KILL -u agentrun; sudo userdel -r agentrun
 sudo sed -i '/^agentrun$/d' /etc/cron.deny /etc/at.deny
 mkdir -p ~/agentbench/opt && mv /srv/agentbench/opt/godot ~/agentbench/opt/
 sudo rm -rf /srv/agentbench

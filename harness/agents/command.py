@@ -8,7 +8,25 @@ from harness.agents.base import AgentResult
 from harness.config import AgentConfig, ConfigError
 from harness.paths import AGENT_USER, OWNER, AttemptPaths
 from harness.remote import Remote, RemoteError
+
 _ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# Run as the agent user before each attempt: nothing an earlier attempt left (OpenCode sessions
+# and snapshots, Claude Code transcripts, caches, temp files) may reach the next one. Kept: the
+# harness's agent config and Claude Code's install and login.
+AGENT_HOME_RESET = (
+    "cd ~ && "
+    "find . -mindepth 1 -maxdepth 1 ! -name .config ! -name .claude ! -name .claude.json "
+    "! -name .local -exec rm -rf {} + && "
+    "{ [ ! -d .config ] || find .config -mindepth 1 -maxdepth 1 ! -name agentbench -exec rm -rf {} +; } && "
+    "{ [ ! -d .claude ] || find .claude -mindepth 1 -maxdepth 1 ! -name .credentials.json "
+    "-exec rm -rf {} +; } && "
+    "{ [ ! -d .local ] || find .local -mindepth 1 -maxdepth 1 ! -name bin ! -name share "
+    "-exec rm -rf {} +; } && "
+    "{ [ ! -d .local/bin ] || find .local/bin -mindepth 1 -maxdepth 1 ! -name claude "
+    "-exec rm -rf {} +; } && "
+    "{ [ ! -d .local/share ] || find .local/share -mindepth 1 -maxdepth 1 ! -name claude "
+    "-exec rm -rf {} +; } && "
+    f"find /tmp /var/tmp /dev/shm -mindepth 1 -maxdepth 1 -user {AGENT_USER} -exec rm -rf {{}} +")
 
 
 def render_command(template: str, **values: str) -> str:
@@ -52,6 +70,7 @@ class CommandAgent:
                f"< /dev/null > {shlex.quote(paths.agent_log)} 2>&1")
         own = f"{shlex.quote(paths.workdir)} {shlex.quote(paths.issue_file)}"
         give_back = f"sudo -n chown -R {OWNER}: {own}"
+        remote.run(f"sudo -n -u {AGENT_USER} -H bash -c {shlex.quote(AGENT_HOME_RESET)}")
         remote.run(f"sudo -n chown -R {AGENT_USER}: {own}")
         try:
             r, wall = self._run_and_kill(remote, cmd, sid, timeout_s)
