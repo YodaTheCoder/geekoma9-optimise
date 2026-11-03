@@ -61,7 +61,7 @@ once the cause was found and has no results.
 - **Throughput:** qwen3-coder solves about 4x as many tasks per hour of agent time as laguna (131.6 vs 34.0 per
   8 h) because it writes about 4x fewer tokens per attempt (2.4k vs 9.0k), at a lower pass rate. For an overnight
   queue of issues this favours qwen3-coder; for issues that must be solved first time it favours laguna.
-- **For E1:** with the caps, Linux has about 2.3 GiB to spare at 24 GiB UMA, so the case for giving the GPU less
+- **For E1:** with the caps, Linux keeps at least 2.2 GiB free at 24 GiB UMA, so the case for giving the GPU less
   memory is now weak for these models. A smaller UMA remains relevant only for models that do not fit 24 GiB
   (qwen3-coder spills 4% at 64k; Qwen3.6-35B needs GTT).
 - Proposed next: E3 harness comparison (OpenCode vs Claude Code vs mini-swe-agent) for laguna and qwen3-coder
