@@ -1,0 +1,20 @@
+id: e3-ckpt-north-mini
+task_set: v1
+tier: screening3
+notes: >-
+  E3 model screen at the E1 uma24 layout (BIOS UMA 24 GiB, default GTT), OpenCode 1.18.32, Ollama
+  0.34.4, 64k context, 3 runs per screening task, llama-server prompt cache capped at 1024 MiB (default 8192) and context checkpoints at 4 (default 32). Re-run of e3-cap-* for the sliding-window models.
+host: {vram_gib: 24, gtt_gib: 3.7}
+runtime:
+  kind: ollama
+  model: north-mini-code-1.0:q4_K_M
+  context: 65536
+  env: {LLAMA_ARG_CACHE_RAM: "1024", LLAMA_ARG_CTX_CHECKPOINTS: "4"}
+agent:
+  kind: command
+  name: opencode
+  version: 1.18.32
+  command: >-
+    BENCH_ENDPOINT={endpoint} OPENCODE_CONFIG="$HOME/.config/agentbench/opencode.json"
+    opencode run --auto --format json --dir {workdir} -m bench/{model} "$(cat {issue_file})"
+  steps_regex: '"type":"tool_use"'
