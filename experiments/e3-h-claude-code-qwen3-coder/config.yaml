@@ -1,0 +1,24 @@
+id: e3-h-claude-code-qwen3-coder
+task_set: v1
+tier: screening3
+notes: >-
+  E3 harness comparison at the E1 uma24 layout (BIOS UMA 24 GiB, default GTT): Claude Code 2.1.316 instead of
+  OpenCode, Ollama 0.34.4, 64k context, llama-server prompt cache capped at 1024 MiB. Compare with
+  e3-cap-qwen3-coder (OpenCode, same model and caps).
+host: {vram_gib: 24, gtt_gib: 3.7}
+runtime:
+  kind: ollama
+  model: qwen3-coder:30b
+  context: 65536
+  env: {LLAMA_ARG_CACHE_RAM: "1024"}
+agent:
+  kind: command
+  name: claude-code
+  version: 2.1.316
+  command: >-
+    ANTHROPIC_BASE_URL={endpoint} ANTHROPIC_API_KEY=local ANTHROPIC_AUTH_TOKEN=local ANTHROPIC_MODEL={model}
+    ANTHROPIC_DEFAULT_HAIKU_MODEL={model} CLAUDE_CODE_ATTRIBUTION_HEADER=0
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 DISABLE_AUTOUPDATER=1
+    "$HOME/.local/bin/claude" -p --bare --dangerously-skip-permissions --output-format stream-json --verbose
+    --model {model} "$(cat {issue_file})"
+  steps_regex: '"type":"tool_use"'
