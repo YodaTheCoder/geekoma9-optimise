@@ -53,6 +53,10 @@ def _usage_from_obj(obj) -> tuple[int | None, int | None]:
               if isinstance(obj.get("message"), dict) else None):
         if isinstance(u, dict):
             up = _pick(u, "prompt_tokens", "input_tokens")
+            # Anthropic input_tokens excludes cache hits; add them to match OpenAI prompt_tokens.
+            if up is not None and "prompt_tokens" not in u:
+                up += sum(_pick(u, k) or 0 for k in
+                          ("cache_read_input_tokens", "cache_creation_input_tokens"))
             ug = _pick(u, "completion_tokens", "output_tokens")
             p = up if up is not None else p
             g = ug if ug is not None else g

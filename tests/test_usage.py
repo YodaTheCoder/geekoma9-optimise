@@ -47,6 +47,18 @@ def test_extract_anthropic_sse():
     assert extract_usage(body, "text/event-stream") == (250, 42)
 
 
+def test_extract_anthropic_counts_cached_input():
+    # Anthropic input_tokens excludes cache hits; OpenAI prompt_tokens includes them.
+    body = (
+        b"event: message_start\n"
+        b'data: {"type":"message_start","message":{"usage":{"input_tokens":138,'
+        b'"cache_read_input_tokens":3400,"cache_creation_input_tokens":12,"output_tokens":1}}}\n\n'
+        b"event: message_delta\n"
+        b'data: {"type":"message_delta","usage":{"output_tokens":157}}\n\n'
+    )
+    assert extract_usage(body, "text/event-stream") == (3550, 157)
+
+
 def test_extract_ollama_ndjson():
     body = (
         b'{"message":{"content":"a"},"done":false}\n'
