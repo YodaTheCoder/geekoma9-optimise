@@ -245,3 +245,22 @@ grep -E 'MemTotal|SwapTotal' /proc/meminfo
 
 The harness also checks these against each config's `host:` section (±0.25 GiB) and refuses to run
 on a mismatch.
+
+## E3 harnesses (Claude Code, mini-swe-agent)
+
+Both run as `agentrun` against the local model through the usage proxy; no Anthropic login is needed.
+
+- Claude Code 2.1.316 in the agent's home (the per-attempt home reset keeps `~/.local/bin/claude` and
+  `~/.local/share/claude`):
+  `sudo -u agentrun -H bash -c 'curl -fsSL https://claude.ai/install.sh | bash -s 2.1.316'`
+- mini-swe-agent 2.4.6 outside the home, which the reset would wipe. LiteLLM 1.108.0 imports `mcp`
+  without depending on it, so it is added explicitly (mcp 2.3.0):
+
+  ```
+  export UV_TOOL_DIR=/srv/agentbench/opt/uv-tools UV_TOOL_BIN_DIR=/srv/agentbench/opt/bin \
+         UV_PYTHON_INSTALL_DIR=/srv/agentbench/opt/python
+  ~/.local/bin/uv tool install --force --python 3.12 --with mcp mini-swe-agent==2.4.6
+  chmod -R a+rX /srv/agentbench/opt
+  ```
+
+  mini-swe-agent does not stream (LiteLLM), so its records have no tok/s figures.

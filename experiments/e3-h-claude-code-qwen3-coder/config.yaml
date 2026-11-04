@@ -1,9 +1,10 @@
 id: e3-h-claude-code-qwen3-coder
 task_set: v1
 tier: screening3
+timeout_s: 1800
 notes: >-
   E3 harness comparison at the E1 uma24 layout (BIOS UMA 24 GiB, default GTT): Claude Code 2.1.316 instead of
-  OpenCode, Ollama 0.34.4, 64k context, llama-server prompt cache capped at 1024 MiB. Compare with
+  OpenCode, Ollama 0.34.4, 64k context, llama-server prompt cache capped at 1024 MiB. 30-minute attempt limit (no OpenCode pass took over 24). Compare with
   e3-cap-qwen3-coder (OpenCode, same model and caps).
 host: {vram_gib: 24, gtt_gib: 3.7}
 runtime:
