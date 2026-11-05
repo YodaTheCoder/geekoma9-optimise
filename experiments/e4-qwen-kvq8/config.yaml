@@ -1,0 +1,20 @@
+id: e4-qwen-kvq8
+task_set: v1
+tier: screening3
+notes: >-
+  E4 quant and context at the E1 uma24 layout (BIOS UMA 24 GiB, default GTT), OpenCode 1.18.32, Ollama
+  0.34.4, 3 runs per screening task, llama-server prompt cache capped at 1024 MiB. q8_0 KV cache (vs f16). Compare with e3-cap-qwen3-coder.
+host: {vram_gib: 24, gtt_gib: 3.7}
+runtime:
+  kind: ollama
+  model: qwen3-coder:30b
+  context: 65536
+  env: {LLAMA_ARG_CACHE_RAM: "1024", OLLAMA_FLASH_ATTENTION: "1", OLLAMA_KV_CACHE_TYPE: "q8_0"}
+agent:
+  kind: command
+  name: opencode
+  version: 1.18.32
+  command: >-
+    BENCH_ENDPOINT={endpoint} OPENCODE_CONFIG="$HOME/.config/agentbench/opencode.json"
+    opencode run --auto --format json --dir {workdir} -m bench/{model} "$(cat {issue_file})"
+  steps_regex: '"type":"tool_use"'
