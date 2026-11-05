@@ -1,0 +1,20 @@
+id: e4-probe-laguna-ctx128k
+task_set: v1
+tier: probe
+notes: >-
+  E4 quant and context at the E1 uma24 layout (BIOS UMA 24 GiB, default GTT), OpenCode 1.18.32, Ollama
+  0.34.4, 3 runs per screening task, llama-server prompt cache capped at 1024 MiB. 128k context, f16 KV. Compare with e3-cap-laguna.
+host: {vram_gib: 24, gtt_gib: 3.7}
+runtime:
+  kind: ollama
+  model: laguna-xs-2.1:q4_K_M
+  context: 131072
+  env: {LLAMA_ARG_CACHE_RAM: "1024"}
+agent:
+  kind: command
+  name: opencode
+  version: 1.18.32
+  command: >-
+    BENCH_ENDPOINT={endpoint} OPENCODE_CONFIG="$HOME/.config/agentbench/opencode.json"
+    opencode run --auto --format json --dir {workdir} -m bench/{model} "$(cat {issue_file})"
+  steps_regex: '"type":"tool_use"'
