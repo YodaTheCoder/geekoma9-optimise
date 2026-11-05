@@ -66,3 +66,4 @@ once the cause was found and has no results.
   (qwen3-coder spills 4% at 64k; Qwen3.6-35B needs GTT).
 - Proposed next: E3 harness comparison (OpenCode vs Claude Code vs mini-swe-agent) for laguna and qwen3-coder
   with both caps, and add the caps to every later config.
+- Done: the harness comparison is in [e3-harness.md](e3-harness.md). OpenCode stays.
