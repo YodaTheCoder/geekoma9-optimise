@@ -36,3 +36,7 @@
 | 011-status-effects | 2 | fail | 0/8 | 3.4 | 30.9 | 5182 | 412 | 0.94 | no | exp/e4-qwen-ctx128k-kvq8-20261106020400/011-status-effects-r2 |
 | 011-status-effects | 3 | fail | 0/0 | 3.1 | 244.5 | 5170 | 412 | 0.94 | no | exp/e4-qwen-ctx128k-kvq8-20261106020400/011-status-effects-r3 |
 <!-- results:end -->
+
+## Findings
+
+See [the E4 comparison](../e4.md).

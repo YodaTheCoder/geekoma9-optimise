@@ -36,3 +36,7 @@
 | 011-status-effects | 2 | fail | 0/0 | 0.5 | 27.0 | 3954 | 412 | 1.00 | no | exp/e4-qwen-udq4-20261106032842/011-status-effects-r2 |
 | 011-status-effects | 3 | fail | 0/0 | 1.4 | 23.4 | 3987 | 412 | 1.00 | no | exp/e4-qwen-udq4-20261106032842/011-status-effects-r3 |
 <!-- results:end -->
+
+## Findings
+
+See [the E4 comparison](../e4.md).

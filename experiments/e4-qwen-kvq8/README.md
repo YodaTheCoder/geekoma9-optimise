@@ -36,3 +36,7 @@
 | 011-status-effects | 2 | pass | 8/8 | 3.9 | 19.4 | 3804 | 411 | 1.00 | no | exp/e4-qwen-kvq8-20261105231146/011-status-effects-r2 |
 | 011-status-effects | 3 | fail | 1/8 | 3.1 | 26.8 | 3831 | 411 | 1.00 | no | exp/e4-qwen-kvq8-20261105231146/011-status-effects-r3 |
 <!-- results:end -->
+
+## Findings
+
+See [the E4 comparison](../e4.md).
