@@ -36,7 +36,9 @@ def render_unit(cfg: RuntimeConfig) -> str:
         raise ConfigError(f"runtime.env: {clash[0]} is set by the harness and cannot be overridden")
     host, port = API.split(":")
     argv = [cfg.server, "-m", cfg.gguf, "--alias", cfg.model, "--host", host, "--port", port,
-            "-c", str(cfg.context), "-np", "1", "-ngl", "999", "--jinja", "--no-webui", *cfg.args]
+            "-c", str(cfg.context), "-np", "1", "-ngl", "999", "--jinja", "--no-webui",
+            # 4 (as Ollama runs it) keeps the load_tensors buffer lines gpu_offload reads
+            "--log-verbosity", "4", *cfg.args]
     lines = ["[Unit]", "Description=agentbench llama.cpp runtime", "",
              "[Service]", "ExecStart=" + " ".join(_quote(a) for a in argv)]
     lines += [f"Environment={k}={v}" for k, v in fixed + sorted(cfg.env.items())]
@@ -113,8 +115,8 @@ class LlamaCppRuntime:
         libdir = self.cfg.server.rsplit("/", 1)[0]
         out = remote.run(f"LD_LIBRARY_PATH={shlex.quote(libdir)} {shlex.quote(self.cfg.server)} "
                          f"--version 2>&1", timeout=30, check=False).stdout
-        m = re.search(r"version: (\S+ \(\w+\))", out)
-        build = m.group(1) if m else (out.strip().splitlines() or ["unknown"])[0]
+        m = re.search(r"^version: (.+)$", out, re.M)
+        build = m.group(1).strip() if m else (out.strip().splitlines() or ["unknown"])[0]
         name = self.cfg.gguf.rsplit("/", 1)[-1]
         if name.startswith("sha256-"):
             digest = name.removeprefix("sha256-")

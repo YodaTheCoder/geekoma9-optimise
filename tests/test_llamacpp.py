@@ -43,7 +43,8 @@ def test_render_unit():
     exec_line = next(l for l in u.splitlines() if l.startswith("ExecStart="))
     assert exec_line.startswith(f"ExecStart={SERVER} ")
     for part in (f"-m {GGUF}", "--alias qwen3-coder:30b", "--host 127.0.0.1", "--port 11434",
-                 "-c 32768", "-np 1", "-ngl 999", "--jinja", "--no-webui", "--temp 0.7"):
+                 "-c 32768", "-np 1", "-ngl 999", "--jinja", "--no-webui", "--log-verbosity 4",
+                 "--temp 0.7"):
         assert part in exec_line
     assert exec_line.endswith("--temp 0.7")  # config args come last and can override defaults
     assert "Environment=LD_LIBRARY_PATH=/srv/agentbench/opt/llama/vulkan-b1" in u
@@ -88,9 +89,9 @@ def test_start_times_out(monkeypatch):
 
 
 def test_versions_uses_blob_digest():
-    r = FakeRemote([("--version", "version: 7123 (80d2c0c)\nbuilt with clang\n")])
+    r = FakeRemote([("--version", "load_backend: x\nversion: 0.9.0-dev (build 12191, commit e95426f16)\nbuilt with clang\n")])
     v = LlamaCppRuntime(cfg()).versions(r)
-    assert v == {"runtime": "llama.cpp 7123 (80d2c0c) vulkan-b1", "model_digest": "abc123"}
+    assert v == {"runtime": "llama.cpp 0.9.0-dev (build 12191, commit e95426f16) vulkan-b1", "model_digest": "abc123"}
 
 
 def test_versions_hashes_other_files():
