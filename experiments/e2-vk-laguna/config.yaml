@@ -1,0 +1,25 @@
+id: e2-vk-laguna
+task_set: v1
+tier: screening3
+notes: >-
+  E2 runtime at the E1 uma24 layout (BIOS UMA 24 GiB, default GTT), OpenCode 1.18.32, llama.cpp b12191 Vulkan (RADV)
+  llama-server instead of Ollama 0.34.4, same GGUF file as the Ollama model, 64k context, f16 KV,
+  prompt cache capped at 1024 MiB. Sampling set to Ollama's defaults (the modelfile sets none). Tool calls use the GGUF chat template with --jinja instead of Ollama's poolside-v1 renderer and parser. Compare with e3-cap-laguna.
+host: {vram_gib: 24, gtt_gib: 3.7}
+timeout_s: 1800
+runtime:
+  kind: llamacpp
+  model: laguna-xs-2.1:q4_K_M
+  context: 65536
+  server: /srv/agentbench/opt/llama/vulkan-b12191/llama-b12191/llama-server
+  gguf: /usr/share/ollama/.ollama/models/blobs/sha256-1ac7079101fca5a6df8c5a7523a3c30ea7d1c0e4b1258090e7d6d4039287f6cb
+  args: ["--temp", "0.8", "--top-p", "0.9", "--top-k", "40", "--min-p", "0", "--repeat-penalty", "1.1"]
+  env: {LLAMA_ARG_CACHE_RAM: "1024"}
+agent:
+  kind: command
+  name: opencode
+  version: 1.18.32
+  command: >-
+    BENCH_ENDPOINT={endpoint} OPENCODE_CONFIG="$HOME/.config/agentbench/opencode.json"
+    opencode run --auto --format json --dir {workdir} -m bench/{model} "$(cat {issue_file})"
+  steps_regex: '"type":"tool_use"'

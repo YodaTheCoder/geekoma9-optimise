@@ -14,10 +14,13 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class RuntimeConfig:
-    kind: Literal["ollama"]
-    model: str
+    kind: Literal["ollama", "llamacpp"]
+    model: str  # Ollama model name; for llamacpp the alias the server answers to
     context: int
     env: dict[str, str] = field(default_factory=dict)
+    server: str = ""  # llamacpp: path to llama-server on geekoma9
+    gguf: str = ""  # llamacpp: path to the model file on geekoma9
+    args: tuple[str, ...] = ()  # llamacpp: extra llama-server arguments
 
 
 @dataclass(frozen=True)
@@ -59,7 +62,7 @@ def check_safe_id(value: str, what: str) -> str:
     if not _SAFE_ID.match(value) or ".." in value:
         raise ConfigError(f"{what}: {value!r} must match {_SAFE_ID.pattern} and not contain '..'")
     return value
-_RUNTIME_KINDS = ("ollama",)
+_RUNTIME_KINDS = ("ollama", "llamacpp")
 _AGENT_KINDS = ("null", "oracle", "command")
 
 
@@ -101,15 +104,22 @@ def _unknown(data: dict, allowed: set[str], prefix: str) -> None:
 
 def _runtime(raw: Any) -> RuntimeConfig:
     d = _mapping(raw, "runtime")
-    _unknown(d, {"kind", "model", "context", "env"}, "runtime.")
     kind = _require(d, "kind", str, "runtime.")
     if kind not in _RUNTIME_KINDS:
         raise ConfigError(f"runtime.kind: must be one of {list(_RUNTIME_KINDS)}, got {kind!r}")
+    extra = {"server", "gguf", "args"} if kind == "llamacpp" else set()
+    _unknown(d, {"kind", "model", "context", "env"} | extra, "runtime.")
+    args = d.get("args", [])
+    if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+        raise ConfigError("runtime.args: expected a list of str")
     return RuntimeConfig(
         kind=kind,
         model=_require(d, "model", str, "runtime."),
         context=_require(d, "context", int, "runtime."),
         env=_str_dict(d, "env", "runtime.", (str,)),
+        server=_require(d, "server", str, "runtime.") if kind == "llamacpp" else "",
+        gguf=_require(d, "gguf", str, "runtime.") if kind == "llamacpp" else "",
+        args=tuple(args),
     )
 
 
