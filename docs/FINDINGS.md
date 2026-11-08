@@ -12,12 +12,13 @@
 | Evidence | `experiments/e4-qwen-ctx32k/`, comparison in `experiments/e4.md` |
 
 Best first-time success: `laguna-xs-2.1` Q4_K_M at 128k context, 15/18 (0.83) but 34.7 solved per 8 h and up to
-7.1 GiB RAM (`experiments/e4-laguna-ctx128k/`). Harnesses: OpenCode beats mini-swe-agent and Claude Code for both
+7.1 GiB RAM (`experiments/e4-laguna-ctx128k/`). Runtimes: Ollama 0.34.4 matches or beats llama.cpp Vulkan and ROCm run directly (`experiments/e2.md`).
+Harnesses: OpenCode beats mini-swe-agent and Claude Code for both
 models (`experiments/e3-harness.md`). Models: `experiments/e3-screen.md`.
 
 Previous best: E0 baseline (`qwen3-coder:30b`, 64k, uncapped prompt cache), 2/6 on the single-run screening tier.
 
 Upper bound: Claude Code with Claude Opus solved 12/12 (`experiments/calibration-frontier/`).
 
-Next: E2 runtime (llama.cpp directly, Vulkan vs ROCm), then E5 finalists. E1 (smaller UMA) is paused: with the
+Next: E5 finalists. E1 (smaller UMA) is paused: with the
 llama-server cache caps, Linux keeps at least 2.2 GiB free at 24 GiB UMA.
