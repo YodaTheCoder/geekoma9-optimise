@@ -1,0 +1,20 @@
+id: e5r2-qwen-ctx32k
+task_set: v1
+tier: finalists
+notes: >-
+  E5 finalists at the E1 uma24 layout (BIOS UMA 24 GiB, default GTT), OpenCode 1.18.32, Ollama
+  0.34.4, all 12 tasks x 3 runs, llama-server prompt cache capped at 1024 MiB, f16 KV. 32k context. Repeat of e5-qwen-ctx32k; compare with e5r2-vk-qwen-ctx32k.
+host: {vram_gib: 24, gtt_gib: 3.7}
+runtime:
+  kind: ollama
+  model: qwen3-coder:30b
+  context: 32768
+  env: {LLAMA_ARG_CACHE_RAM: "1024"}
+agent:
+  kind: command
+  name: opencode
+  version: 1.18.32
+  command: >-
+    BENCH_ENDPOINT={endpoint} OPENCODE_CONFIG="$HOME/.config/agentbench/opencode.json"
+    opencode run --auto --format json --dir {workdir} -m bench/{model} "$(cat {issue_file})"
+  steps_regex: '"type":"tool_use"'
